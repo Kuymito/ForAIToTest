@@ -1,16 +1,14 @@
 import { Suspense } from 'react';
+import { getServerSession } from 'next-auth/next';
+import { authOptions } from '@/app/api/auth/[...nextauth]/route';
 import AdminLayout from '@/components/AdminLayout';
 import RoomPageSkeleton from './components/RoomPageSkeleton';
 import RoomClientView from './components/RoomClientView';
-import { getAllRooms } from '@/services/room.service';
+import { roomService } from '@/services/room.service';
 import { scheduleService } from '@/services/schedule.service';
-import { getServerSession } from 'next-auth/next';
-import { authOptions } from '@/app/api/auth/[...nextauth]/route';
 
 /**
  * Fetches and processes both room and schedule data on the server.
- * This function now combines data from two endpoints to build the full picture.
- * @returns {Promise<{initialAllRoomsData: object, buildingLayout: object, scheduleMap: object}>}
  */
 async function fetchAndProcessRoomData() {
     const session = await getServerSession(authOptions);
@@ -24,10 +22,10 @@ async function fetchAndProcessRoomData() {
     try {
         // Fetch rooms and schedules in parallel for efficiency
         const [apiRooms, apiSchedules] = await Promise.all([
-            getAllRooms(token),
+            roomService.getAllRooms(token),
             scheduleService.getAllSchedules(token)
         ]);
-        
+
         const roomsDataMap = {};
         const populatedLayout = {};
 
@@ -35,7 +33,6 @@ async function fetchAndProcessRoomData() {
         apiRooms.forEach(room => {
             const { roomId, roomName, buildingName, floor, capacity, type, equipment } = room;
 
-            // Dynamically build the building layout object from the fetched data
             if (!populatedLayout[buildingName]) {
                 populatedLayout[buildingName] = [];
             }
@@ -48,7 +45,7 @@ async function fetchAndProcessRoomData() {
                  floorObj.rooms.push(roomName);
             }
 
-            // Store detailed room metadata
+            // Store detailed room metadata, ensuring equipment is an array
             roomsDataMap[roomId] = {
                 id: roomId,
                 name: roomName,
@@ -56,23 +53,18 @@ async function fetchAndProcessRoomData() {
                 floor: floor,
                 capacity: capacity,
                 type: type,
-                equipment: typeof equipment === 'string' ? equipment.split(',').map(e => e.trim()).filter(Boolean) : [],
+                equipment: typeof equipment === 'string' ? equipment.split(',').map(e => e.trim()).filter(Boolean) : (Array.isArray(equipment) ? equipment : []),
             };
         });
-        
+
         // Create a map of schedules for quick lookup: { "Monday": { "07:00:00-10:00:00": { roomId: className } } }
         const scheduleMap = {};
         apiSchedules.forEach(schedule => {
             const day = schedule.day;
             const timeSlot = `${schedule.shift.startTime}-${schedule.shift.endTime}`;
             
-            if (!scheduleMap[day]) {
-                scheduleMap[day] = {};
-            }
-            if (!scheduleMap[day][timeSlot]) {
-                scheduleMap[day][timeSlot] = {};
-            }
-            // Map the room ID to the class name for the specific day and time
+            if (!scheduleMap[day]) scheduleMap[day] = {};
+            if (!scheduleMap[day][timeSlot]) scheduleMap[day][timeSlot] = {};
             scheduleMap[day][timeSlot][schedule.roomId] = schedule.className;
         });
 
@@ -81,10 +73,10 @@ async function fetchAndProcessRoomData() {
             populatedLayout[building].sort((a, b) => b.floor - a.floor);
         }
         
-        return { 
-            initialAllRoomsData: roomsDataMap, 
+        return {
+            initialAllRoomsData: roomsDataMap,
             buildingLayout: populatedLayout,
-            scheduleMap: scheduleMap 
+            scheduleMap: scheduleMap
         };
 
     } catch (error) {
@@ -102,9 +94,9 @@ export default async function AdminRoomPage() {
     return (
         <AdminLayout activeItem="room" pageTitle="Management">
             <Suspense fallback={<RoomPageSkeleton />}>
-                <RoomClientView 
-                    initialAllRoomsData={initialAllRoomsData} 
-                    buildingLayout={buildingLayout} 
+                <RoomClientView
+                    initialAllRoomsData={initialAllRoomsData}
+                    buildingLayout={buildingLayout}
                     initialScheduleMap={scheduleMap}
                 />
             </Suspense>

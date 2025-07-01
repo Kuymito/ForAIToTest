@@ -1,38 +1,38 @@
 'use client';
 
 import { useState, useMemo, useTransition, useEffect } from 'react';
-import InstructorCreatePopup from './InstructorCreatePopup';
 import { useRouter } from 'next/navigation';
-import useSWR from 'swr';
+import useSWR, { useSWRConfig } from 'swr';
 import { useSession } from 'next-auth/react';
-import { instructorService } from '@/services/instructor.service';
-import InstructorPageSkeleton from './InstructorPageSkeleton';
+import toast from 'react-hot-toast';
 
-// --- Reusable Icon and Spinner Components ---
-const Spinner = () => ( <svg className="animate-spin h-5 w-5 text-gray-500 dark:text-gray-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> );
-const EditIcon = ({ className = "w-[14px] h-[14px]" }) => ( <svg className={className} viewBox="0 0 17 17" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M8.06671 2.125H4.95837C3.00254 2.125 2.12504 3.0025 2.12504 4.95833V12.0417C2.12504 13.9975 3.00254 14.875 4.95837 14.875H12.0417C13.9975 14.875 14.875 13.9975 14.875 12.0417V8.93333" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/><path d="M10.6579 3.2658L6.28042 7.64327C6.10542 7.81827 5.93042 8.15055 5.89125 8.3928L5.64958 10.112C5.56625 10.7037 6.01958 11.157 6.61125 11.0737L8.33042 10.832C8.57292 10.7928 8.90542 10.6178 9.08042 10.4428L13.4579 6.0653C14.2662 5.25705 14.5796 4.26827 13.4579 3.14662C12.3362 2.03205 11.3479 2.45705 10.6579 3.2658Z" stroke="currentColor" strokeWidth="1.2" strokeMiterlimit="10" strokeLinecap="round" strokeLinejoin="round"/><path d="M9.8999 4.02502C10.2716 5.66752 11.0583 6.45419 12.7008 6.82585" stroke="currentColor" strokeWidth="1.2" strokeMiterlimit="10" strokeLinecap="round" strokeLinejoin="round"/></svg> );
-const ArchiveIcon = ({ className = "w-[14px] h-[14px]" }) => ( <svg className={className} viewBox="0 0 17 17" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M14.1667 5.66667V12.0417C14.1667 13.9975 13.2892 14.875 11.3334 14.875H5.66671C3.71087 14.875 2.83337 13.9975 2.83337 12.0417V5.66667" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/><path d="M14.875 2.125H2.125L2.12504 5.66667H14.875V2.125Z" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/><path d="M7.79163 8.5H9.20829" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/></svg> );
-const DefaultAvatarIcon = ({ className = "w-8 h-8" }) => ( <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className={`${className} border border-gray-300 rounded-full p-1 dark:border-gray-600`}><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z" /></svg> );
+import InstructorCreatePopup from './InstructorCreatePopup';
+import InstructorPageSkeleton from './InstructorPageSkeleton';
+import { Spinner, EditIcon, ArchiveIcon, DefaultAvatarIcon } from './IconComponents';
+
+import { instructorService } from '@/services/instructor.service';
 
 const fetcher = ([key, token]) => instructorService.getAllInstructors(token);
 
-export default function InstructorClientView({ initialInstructors }) {
+export default function InstructorClientView({ initialInstructors, departments }) {
     const router = useRouter();
     const { data: session } = useSession();
+    const { mutate } = useSWRConfig();
     const [isLoading, setIsLoading] = useState(true);
 
-    const { data, error } = useSWR(
-        session?.accessToken ? ['/api/v1/instructors', session.accessToken] : null,
+    const swrKey = session?.accessToken ? ['/api/v1/instructors', session.accessToken] : null;
+
+    const { data: instructors, error } = useSWR(
+        swrKey,
         fetcher,
         {
             fallbackData: initialInstructors,
-            revalidateOnFocus: true,
+            revalidateOnFocus: false,
             onSuccess: () => setIsLoading(false),
             onError: () => setIsLoading(false),
         }
     );
 
-    const [instructorData, setInstructorData] = useState(initialInstructors);
     const [isPending, startTransition] = useTransition();
     const [rowLoadingId, setRowLoadingId] = useState(null);
     const [showCreateInstructorPopup, setShowCreateInstructorPopup] = useState(false);
@@ -44,33 +44,69 @@ export default function InstructorClientView({ initialInstructors }) {
     const itemsPerPageOptions = [5, 10, 20, 50];
     const [itemsPerPage, setItemsPerPage] = useState(itemsPerPageOptions[0]);
 
-    useEffect(() => {
-        if (data) {
-            const formattedData = data.map(item => ({
-                id: item.instructorId,
-                name: `${item.firstName} ${item.lastName}`,
-                email: item.email,
-                phone: item.phone,
-                majorStudied: item.major,
-                qualifications: item.degree,
-                status: item.archived ? 'archived' : 'active',
-                profileImage: item.profile || null,
-            }));
-            setInstructorData(formattedData);
+    const formattedInstructorData = useMemo(() => {
+        if (!instructors) return [];
+        return instructors.map(item => ({
+            id: item.instructorId,
+            name: `${item.firstName} ${item.lastName}`,
+            email: item.email,
+            phone: item.phone,
+            majorStudied: item.major,
+            qualifications: item.degree,
+            status: item.archived ? 'archived' : 'active',
+            profileImage: item.profile || null,
+        }));
+    }, [instructors]);
+
+    const handleSaveNewInstructor = async (newInstructorData) => {
+        if (!session?.accessToken) {
+            toast.error("Authentication error. Please log in again.");
+            return;
         }
-    }, [data]);
+        const selectedDept = departments.find(d => d.name === newInstructorData.major);
+        if (!selectedDept) {
+            toast.error(`Invalid major/department selected: ${newInstructorData.major}`);
+            return;
+        }
+        const payload = {
+            firstName: newInstructorData.firstName,
+            lastName: newInstructorData.lastName,
+            email: newInstructorData.email,
+            phone: newInstructorData.phone,
+            degree: newInstructorData.qualifications,
+            major: newInstructorData.major,
+            address: newInstructorData.address,
+            profile: newInstructorData.profileImage || "",
+            departmentId: selectedDept.departmentId,
+        };
+        try {
+            await instructorService.createInstructor(payload, session.accessToken);
+            toast.success("Instructor created successfully!");
+            setShowCreateInstructorPopup(false);
+            mutate(swrKey);
+        } catch (error) {
+            toast.error(`Creation failed: ${error.message}`);
+        }
+    };
+
+    const toggleInstructorStatus = async (id, currentStatus) => {
+        if (!session?.accessToken) {
+            toast.error("Authentication error. Please log in again.");
+            return;
+        }
+        const isArchived = currentStatus === 'active';
+        try {
+            await instructorService.updateInstructorStatus(id, isArchived, session.accessToken);
+            toast.success(`Instructor ${isArchived ? 'archived' : 'activated'} successfully!`);
+            mutate(swrKey);
+        } catch (error) {
+            toast.error(`Update failed: ${error.message}`);
+        }
+    };
 
     const handleRowClick = (instructorId) => {
         setRowLoadingId(instructorId);
-        startTransition(() => {
-            router.push(`/admin/instructor/${instructorId}`);
-        });
-    };
-    
-    const handleSaveNewInstructor = (newInstructorData) => {
-        const newId = instructorData.length > 0 ? Math.max(...instructorData.map(item => item.id)) + 1 : 1;
-        setInstructorData(prevData => [...prevData, { id: newId, ...newInstructorData, status: 'active' }]);
-        setCurrentPage(1);
+        startTransition(() => { router.push(`/admin/instructor/${instructorId}`); });
     };
 
     const handleSort = (column) => {
@@ -82,7 +118,7 @@ export default function InstructorClientView({ initialInstructors }) {
             setSortDirection('asc');
         }
     };
-    
+
     const getSortIndicator = (column) => {
         if (sortColumn === column) {
             return sortDirection === 'asc' ?
@@ -96,15 +132,9 @@ export default function InstructorClientView({ initialInstructors }) {
         setSearchTexts(prev => ({ ...prev, [column]: value }));
         setCurrentPage(1);
     };
-    
-    const toggleInstructorStatus = (id) => {
-        setInstructorData(prevData =>
-            prevData.map(item => item.id === id ? { ...item, status: item.status === 'active' ? 'archived' : 'active' } : item)
-        );
-    };
 
     const filteredInstructorData = useMemo(() => {
-        let data = [...instructorData];
+        let data = [...formattedInstructorData];
         if (statusFilter !== 'all') {
             data = data.filter(item => item.status === statusFilter);
         }
@@ -123,7 +153,7 @@ export default function InstructorClientView({ initialInstructors }) {
             });
         }
         return data;
-    }, [instructorData, statusFilter, searchTexts, sortColumn, sortDirection]);
+    }, [formattedInstructorData, statusFilter, searchTexts, sortColumn, sortDirection]);
 
     const totalPages = Math.ceil(filteredInstructorData.length / itemsPerPage);
     const currentTableData = useMemo(() => {
@@ -152,13 +182,8 @@ export default function InstructorClientView({ initialInstructors }) {
         return pageNumbers;
     };
 
-    if (isLoading) {
-        return <InstructorPageSkeleton />;
-    }
-    
-    if (error) {
-        return <div className="p-6 text-center text-red-500">Failed to load instructor data. Please try again.</div>;
-    }
+    if (isLoading) return <InstructorPageSkeleton />;
+    if (error) return <div className="p-6 text-center text-red-500">Failed to load instructor data. Please try again.</div>;
 
     return (
         <div className="p-6 dark:text-white">
@@ -175,10 +200,10 @@ export default function InstructorClientView({ initialInstructors }) {
                         onChange={(e) => handleSearchChange('name', e.target.value)}
                         className="block w-72 p-2 text-xs font-medium text-gray-900 bg-white border border-gray-200 rounded-lg hover:bg-gray-100 dark:bg-gray-800 dark:border-gray-700 dark:text-white dark:hover:text-white dark:hover:bg-gray-700"
                     />
-                     <div className="inline-flex rounded-md shadow-xs" role="group">
-                        <button type="button" onClick={() => { setStatusFilter('active'); setCurrentPage(1); }} className={`px-4 py-2 text-xs font-medium rounded-s-lg border ${ statusFilter === 'active' ? 'text-blue-700 bg-blue-50 border-blue-300 dark:bg-gray-700 dark:text-blue-300 dark:border-blue-600' : 'text-gray-900 bg-white border-gray-200 hover:bg-gray-100 hover:text-blue-700 dark:bg-gray-800 dark:border-gray-700 dark:text-white dark:hover:text-white dark:hover:bg-gray-700' }`}>Active</button>
-                        <button type="button" onClick={() => { setStatusFilter('archived'); setCurrentPage(1); }} className={`px-4 py-2 text-xs font-medium border-t border-b ${ statusFilter === 'archived' ? 'text-red-700 bg-red-50 border-red-300 dark:bg-gray-700 dark:text-red-300 dark:border-red-600' : 'text-gray-900 bg-white border-gray-200 hover:bg-gray-100 hover:text-red-700 dark:bg-gray-800 dark:border-gray-700 dark:text-white dark:hover:text-white dark:hover:bg-gray-700' }`}>Archive</button>
-                        <button type="button" onClick={() => { setStatusFilter('all'); setCurrentPage(1); }} className={`px-4 py-2 text-xs font-medium rounded-e-lg border ${ statusFilter === 'all' ? 'text-purple-700 bg-purple-50 border-purple-300 dark:bg-gray-700 dark:text-purple-300 dark:border-purple-600' : 'text-gray-900 bg-white border-gray-200 hover:bg-gray-100 hover:text-purple-700 dark:bg-gray-800 dark:border-gray-700 dark:text-white dark:hover:text-white dark:hover:bg-gray-700' }`}>All</button>
+                    <div className="inline-flex rounded-md shadow-xs" role="group">
+                        <button type="button" onClick={() => { setStatusFilter('active'); setCurrentPage(1); }} className={`px-4 py-2 text-xs font-medium rounded-s-lg border ${statusFilter === 'active' ? 'text-blue-700 bg-blue-50 border-blue-300 dark:bg-gray-700 dark:text-blue-300 dark:border-blue-600' : 'text-gray-900 bg-white border-gray-200 hover:bg-gray-100 hover:text-blue-700 dark:bg-gray-800 dark:border-gray-700 dark:text-white dark:hover:text-white dark:hover:bg-gray-700'}`}>Active</button>
+                        <button type="button" onClick={() => { setStatusFilter('archived'); setCurrentPage(1); }} className={`px-4 py-2 text-xs font-medium border-t border-b ${statusFilter === 'archived' ? 'text-red-700 bg-red-50 border-red-300 dark:bg-gray-700 dark:text-red-300 dark:border-red-600' : 'text-gray-900 bg-white border-gray-200 hover:bg-gray-100 hover:text-red-700 dark:bg-gray-800 dark:border-gray-700 dark:text-white dark:hover:text-white dark:hover:bg-gray-700'}`}>Archive</button>
+                        <button type="button" onClick={() => { setStatusFilter('all'); setCurrentPage(1); }} className={`px-4 py-2 text-xs font-medium rounded-e-lg border ${statusFilter === 'all' ? 'text-purple-700 bg-purple-50 border-purple-300 dark:bg-gray-700 dark:text-purple-300 dark:border-purple-600' : 'text-gray-900 bg-white border-gray-200 hover:bg-gray-100 hover:text-purple-700 dark:bg-gray-800 dark:border-gray-700 dark:text-white dark:hover:text-white dark:hover:bg-gray-700'}`}>All</button>
                     </div>
                 </div>
                 <button type="button" onClick={() => setShowCreateInstructorPopup(true)} className="text-white bg-[#75B846] hover:bg-[#87D94D] focus:ring-2 focus:ring-green-600 font-medium rounded-md text-xs px-3 py-2 text-center inline-flex items-center dark:bg-[#75B846] me-2 mb-2 dark:hover:bg-[#79c344] dark:focus:ring-green-800 gap-1">
@@ -186,13 +211,13 @@ export default function InstructorClientView({ initialInstructors }) {
                     Create
                 </button>
             </div>
-             <div className="relative overflow-x-auto border border-gray-200 dark:border-gray-600 rounded-lg">
+            <div className="relative overflow-x-auto border border-gray-200 dark:border-gray-600 rounded-lg">
                 <table className="w-full rounded-lg text-sm text-left rtl:text-right text-gray-500">
                     <thead className="text-xs text-gray-700 border-b border-gray-200 bg-gray-50 dark:text-gray-400 dark:border-gray-600 dark:bg-gray-700">
                         <tr>
                             <th scope="col" className="px-6 py-2.5"> Action </th>
                             <th scope="col" className="px-6 py-2.5 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-600">
-                                <div className="flex items-center" onClick={() => handleSort('name')}> Name {getSortIndicator('name')}</div> 
+                                <div className="flex items-center" onClick={() => handleSort('name')}> Name {getSortIndicator('name')}</div>
                             </th>
                             <th scope="col" className="px-6 py-2.5 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-600 sm:table-cell hidden">
                                 <div className="flex items-center" onClick={() => handleSort('email')}> Email {getSortIndicator('email')}</div>
@@ -214,7 +239,7 @@ export default function InstructorClientView({ initialInstructors }) {
                     <tbody className="text-xs font-normal text-gray-700 dark:text-gray-400">
                         {currentTableData.length > 0 ? (
                             currentTableData.map((data) => (
-                                <tr key={data.id} className={`bg-white border-b border-gray-200 dark:bg-gray-800 dark:border-gray-700 ${ (isPending && rowLoadingId === data.id) ? 'cursor-wait bg-gray-100 dark:bg-gray-700' : 'hover:bg-gray-50 dark:hover:bg-gray-600 cursor-pointer'}`} onClick={() => handleRowClick(data.id)}>
+                                <tr key={data.id} className={`bg-white border-b border-gray-200 dark:bg-gray-800 dark:border-gray-700 ${(isPending && rowLoadingId === data.id) ? 'cursor-wait bg-gray-100 dark:bg-gray-700' : 'hover:bg-gray-50 dark:hover:bg-gray-600 cursor-pointer'}`} onClick={() => handleRowClick(data.id)}>
                                     {(isPending && rowLoadingId === data.id) ? (
                                         <td colSpan={7} className="px-6 py-1 text-center"><div className="flex justify-center items-center h-10"><Spinner /></div></td>
                                     ) : (
@@ -222,15 +247,15 @@ export default function InstructorClientView({ initialInstructors }) {
                                             <td scope="row" className="px-6 py-2.5 font-medium text-gray-900 whitespace-nowrap dark:text-white">
                                                 <div className="flex gap-2">
                                                     <button onClick={(e) => { e.stopPropagation(); handleRowClick(data.id); }} className={`p-1 text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300`}><EditIcon className="size-4" /></button>
-                                                    <button onClick={(e) => { e.stopPropagation(); toggleInstructorStatus(data.id); }} className={`p-1 ${data.status === 'active' ? 'text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300' : 'text-green-600 hover:text-green-800 dark:text-green-400 dark:hover:text-green-300'}`} title={data.status === 'active' ? 'Archive Instructor' : 'Activate Instructor'}><ArchiveIcon className="size-4" /></button>
+                                                    <button onClick={(e) => { e.stopPropagation(); toggleInstructorStatus(data.id, data.status); }} className={`p-1 ${data.status === 'active' ? 'text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300' : 'text-green-600 hover:text-green-800 dark:text-green-400 dark:hover:text-green-300'}`} title={data.status === 'active' ? 'Archive Instructor' : 'Activate Instructor'}><ArchiveIcon className="size-4" /></button>
                                                 </div>
                                             </td>
-                                            <td className="px-6 py-2"><div className="flex items-center gap-2">{data.profileImage ? <img src={data.profileImage} alt={data.name} className="w-8 h-8 rounded-full object-cover border border-gray-200 dark:border-gray-600"/> : <DefaultAvatarIcon className="size-8 text-gray-400 bg-gray-100 dark:bg-gray-700 dark:text-gray-500" />} {data.name}</div></td>
+                                            <td className="px-6 py-2"><div className="flex items-center gap-2">{data.profileImage ? <img src={data.profileImage} alt={data.name} className="w-8 h-8 rounded-full object-cover border border-gray-200 dark:border-gray-600" /> : <DefaultAvatarIcon className="size-8 text-gray-400 bg-gray-100 dark:bg-gray-700 dark:text-gray-500" />} {data.name}</div></td>
                                             <td className="px-6 py-2 sm:table-cell hidden"> {data.email} </td>
                                             <td className="px-6 py-2 lg:table-cell hidden"> {data.phone} </td>
                                             <td className="px-6 py-2"> {data.majorStudied} </td>
                                             <td className="px-6 py-2 sm:table-cell hidden"> {data.qualifications} </td>
-                                            <td className="px-6 py-2 capitalize"><span className={`px-2 py-0.5 rounded-full text-xs font-medium ${ data.status === 'active' ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200' : 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200' }`}>{data.status}</span></td>
+                                            <td className="px-6 py-2 capitalize"><span className={`px-2 py-0.5 rounded-full text-xs font-medium ${data.status === 'active' ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200' : 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200'}`}>{data.status}</span></td>
                                         </>
                                     )}
                                 </tr>
@@ -239,6 +264,7 @@ export default function InstructorClientView({ initialInstructors }) {
                             <tr className="bg-white dark:bg-gray-800"><td colSpan="7" className="px-6 py-4 text-center text-gray-500 dark:text-gray-400">No matching results found.</td></tr>
                         )}
                     </tbody>
+                    {/* THIS IS THE ADDED SECTION */}
                     <tfoot className="text-xs text-gray-700 border-t border-gray-200 bg-gray-50 dark:text-gray-400 dark:border-gray-600 dark:bg-gray-700">
                         <tr>
                             <td className="px-6 py-2.5"></td>
@@ -271,7 +297,12 @@ export default function InstructorClientView({ initialInstructors }) {
                 </ul>
             </nav>
 
-            <InstructorCreatePopup isOpen={showCreateInstructorPopup} onClose={() => setShowCreateInstructorPopup(false)} onSave={handleSaveNewInstructor} />
+            <InstructorCreatePopup
+                isOpen={showCreateInstructorPopup}
+                onClose={() => setShowCreateInstructorPopup(false)}
+                onSave={handleSaveNewInstructor}
+                departments={departments}
+            />
         </div>
     );
 }
