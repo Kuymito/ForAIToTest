@@ -8,16 +8,22 @@ import AdminPopup from 'src/app/admin/profile/components/AdminPopup';
 import LogoutAlert from '@/components/LogoutAlert';
 import Footer from '@/components/Footer';
 import NotificationPopup from '@/app/admin/notification/AdminNotificationPopup';
-import { signOut } from 'next-auth/react';
+import { signOut, useSession } from 'next-auth/react';
+import useSWR, { mutate } from 'swr';
+import { authService } from '@/services/auth.service';
+import { notificationService } from '@/services/notification.service';
 import { moul } from './fonts';
 
 const TOPBAR_HEIGHT = '90px';
+const profileFetcher = ([, token]) => authService.getProfile(token);
+const notificationsFetcher = ([, token]) => notificationService.getNotifications(token);
+const changeRequestsFetcher = ([, token]) => notificationService.getChangeRequests(token);
 
-export default function AdminLayout({ children, activeItem, pageTitle }) {
+export default function AdminLayout({ children, activeItem, pageTitle, breadcrumbs }) {
     const [showAdminPopup, setShowAdminPopup] = useState(false);
     const [showLogoutAlert, setShowLogoutAlert] = useState(false);
     const [showNotificationPopup, setShowNotificationPopup] = useState(false);
-    const [notifications, setNotifications] = useState([]);
+    const [isLoading, setIsLoading] = useState(false); 
     const [navigatingTo, setNavigatingTo] = useState(null);
     const notificationPopupRef = useRef(null);
     const notificationIconRef = useRef(null);
@@ -26,7 +32,6 @@ export default function AdminLayout({ children, activeItem, pageTitle }) {
     const router = useRouter();
     const pathname = usePathname();
     const [ isProfileNavigating, setIsProfileNavigating] = useState(false);
-    const [isLoading, setIsLoading] = useState(false);
     const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(() => {
         if (typeof window !== 'undefined') {
             return localStorage.getItem('sidebarCollapsed') === 'true';
@@ -34,93 +39,102 @@ export default function AdminLayout({ children, activeItem, pageTitle }) {
         return false;
     });
 
+    const { data: session } = useSession();
+    const token = session?.accessToken;
+
+    const { data: profile } = useSWR(
+        token ? ['/api/profile', token] : null,
+        profileFetcher
+    );
+
+    const { data: notifications, mutate: mutateNotifications } = useSWR(
+        token ? ['/api/notifications', token] : null,
+        notificationsFetcher,
+        {
+            refreshInterval: 5000,
+        }
+    );
+
+    const { data: changeRequests, mutate: mutateChangeRequests } = useSWR(
+        token ? ['/api/change-requests', token] : null,
+        changeRequestsFetcher,
+        {
+            refreshInterval: 5000,
+        }
+    );
+
+    const finalBreadcrumbs = breadcrumbs || [{ label: pageTitle }];
+
+    useEffect(() => {
+        if (typeof window !== 'undefined') {
+            localStorage.setItem('sidebarCollapsed', isSidebarCollapsed);
+        }
+    }, [isSidebarCollapsed]);
+
     const toggleSidebar = () => setIsSidebarCollapsed(!isSidebarCollapsed);
-    const handleUserIconClick = (event) => { 
+    const handleUserIconClick = (event) => {
         event.stopPropagation();
         if (showNotificationPopup) {
             setShowNotificationPopup(false);
         }
         setShowAdminPopup(prev => !prev);
     };
-    const handleLogoutClick = () => {
-        setShowAdminPopup(false);
-        setShowLogoutAlert(true);
-    };
+    const handleLogoutClick = () => { setShowAdminPopup(false); setShowLogoutAlert(true); };
     const handleCloseLogoutAlert = () => setShowLogoutAlert(false);
-    const handleConfirmLogout = () => {
+
+    const handleConfirmLogout = () => { 
         setShowLogoutAlert(false);
         setIsLoading(true);
         signOut({ callbackUrl: '/api/auth/login' });
     };
+
+    const handleNavItemClick = (item) => {
+        if (pathname !== item.href) {
+            setNavigatingTo(item.id);
+            router.push(item.href);
+        }
+    };
     
+    useEffect(() => {
+        setNavigatingTo(null);
+    }, [pathname]);
+
     const handleToggleNotificationPopup = (event) => {
         event.stopPropagation();
         if (showAdminPopup) {
             setShowAdminPopup(false);
         }
-        setShowNotificationPopup(prev => !prev);
+        setShowNotificationPopup(prev => !prev); 
     };
     
-    const mockAPICall = async (action, data) => {
-        console.log(`MOCK API CALL: ${action}`, data || '');
-        // Artificial delay removed
-        return { success: true, message: `${action} successful.` };
-    };
-
-    const handleMarkSingleAsRead = (notificationId) => {
-        setNotifications(prevNotifications =>
-            prevNotifications.map(n =>
-                n.id === notificationId ? { ...n, isUnread: false } : n
-            )
-        );
+    const handleMarkSingleAsRead = async (notificationId) => {
+        await notificationService.markNotificationAsRead(notificationId, token);
+        mutateNotifications();
     };
 
     const handleMarkAllRead = async () => {
-        try {
-            await mockAPICall("Mark all notifications as read");
-            setNotifications(prevNotifications =>
-                prevNotifications.map(n => ({ ...n, isUnread: false }))
-            );
-        } catch (error) {
-            console.error("Failed to mark all as read:", error);
+        const unreadIds = notifications?.filter(n => !n.read).map(n => n.notificationId) || [];
+        if (unreadIds.length > 0) {
+            await Promise.all(unreadIds.map(id => notificationService.markNotificationAsRead(id, token)));
+            mutateNotifications();
         }
     };
 
-    const handleApproveNotification = async (notificationId) => {
-        try {
-            await mockAPICall("Approve notification", { notificationId });
-            setNotifications(prevNotifications =>
-                prevNotifications.map(n => {
-                    if (n.id === notificationId) {
-                        const { requestorName, room, time } = n.details;
-                        return { ...n, message: `You approved the request from ${requestorName} for Room ${room} at ${time}.`, type: 'info_approved', isUnread: false };
-                    }
-                    return n;
-                })
-            );
-        } catch (error) {
-            console.error(`Failed to approve ${notificationId}:`, error);
-        }
+    const handleApproveNotification = async (requestId) => {
+        await notificationService.approveChangeRequest(requestId, token);
+        mutateChangeRequests();
+        mutateNotifications();
+        mutate(['/api/v1/schedule', token]);
     };
 
-    const handleDenyNotification = async (notificationId) => {
-        try {
-            await mockAPICall("Deny notification", { notificationId });
-            setNotifications(prevNotifications =>
-                prevNotifications.map(n => {
-                    if (n.id === notificationId) {
-                        const { requestorName, room, time } = n.details;
-                        return { ...n, message: `You denied the request from ${requestorName} for Room ${room} at ${time}.`, type: 'info_denied', isUnread: false };
-                    }
-                    return n;
-                })
-            );
-        } catch (error) {
-            console.error(`Failed to deny ${notificationId}:`, error);
-        }
+    const handleDenyNotification = async (requestId) => {
+        await notificationService.denyChangeRequest(requestId, token);
+        mutateChangeRequests();
+        mutateNotifications();
+        mutate(['/api/v1/schedule', token]);
     };
 
-    const hasUnreadNotifications = notifications.some(n => n.isUnread);
+    const hasUnreadNotifications = notifications?.some(n => !n.read) || changeRequests?.some(cr => cr.status === 'PENDING');
 
     const handleProfileNav = (path) => {
         if (isProfileNavigating) return;
@@ -132,24 +146,7 @@ export default function AdminLayout({ children, activeItem, pageTitle }) {
         router.push(path);
     };
     
-    const handleNavItemClick = (item) => {
-        if (pathname !== item.href) {
-            setNavigatingTo(item.id);
-            router.push(item.href);
-        }
-    };
-
-    useEffect(() => {
-        setNavigatingTo(null);
-    }, [pathname]);
-
     const sidebarWidth = isSidebarCollapsed ? '80px' : '265px';
-
-    useEffect(() => {
-        if (typeof window !== 'undefined') {
-            localStorage.setItem('sidebarCollapsed', isSidebarCollapsed);
-        }
-    }, [isSidebarCollapsed]);
 
     useEffect(() => {
         const handleClickOutside = (event) => {
@@ -163,16 +160,6 @@ export default function AdminLayout({ children, activeItem, pageTitle }) {
         document.addEventListener('click', handleClickOutside);
         return () => document.removeEventListener('click', handleClickOutside);
     }, [showAdminPopup, showNotificationPopup]);
-
-    useEffect(() => {
-        const mockNotificationsData = [
-            { id: 1, avatarUrl: 'https://randomuser.me/api/portraits/women/60.jpg', message: 'Dr. Linda Keo is requesting room A1 at 7:00 - 10:00am for class 31/31 IT-morning', timestamp: '10m', isUnread: true, type: 'roomRequest', details: { requestorName: 'Dr. Linda Keo', room: 'A1', time: '7:00 - 10:00am', class: '31/31 IT-morning' } },
-            { id: 2, avatarUrl: 'https://randomuser.me/api/portraits/men/45.jpg', message: 'You have Approved Mr. Chan Keo request for a room change. The update has been successfully recorded.', timestamp: '1h', isUnread: false, type: 'info', details: { requestorName: 'Mr. Chan Keo' } },
-            { id: 3, avatarUrl: 'https://randomuser.me/api/portraits/women/33.jpg', message: 'You have Denied Mr. Tomoko Inoue request for a room change.', timestamp: '2h', isUnread: false, type: 'info', details: { requestorName: 'Mr. Tomoko Inoue' } },
-            { id: 4, avatarUrl: 'https://randomuser.me/api/portraits/men/78.jpg', message: 'Mr. Eric Sok submitted a new maintenance request for Projector in B2.', timestamp: '5h', isUnread: true, type: 'maintenanceRequest', details: { requestorName: 'Mr. Eric Sok' } },
-        ];
-        setNotifications(mockNotificationsData);
-    }, []);
 
     useEffect(() => {
         if (isProfileNavigating) {
@@ -197,7 +184,7 @@ export default function AdminLayout({ children, activeItem, pageTitle }) {
             <Sidebar isCollapsed={isSidebarCollapsed} activeItem={activeItem} onNavItemClick={handleNavItemClick} navigatingTo={navigatingTo} />
             <div className="flex flex-col flex-grow transition-all duration-300 ease-in-out" style={{ marginLeft: sidebarWidth, width: `calc(100% - ${sidebarWidth})`, height: '100vh', overflowY: 'auto' }}>
                 <div className="fixed top-0 bg-white dark:bg-gray-900 shadow-custom-medium p-5 flex justify-between items-center z-30 transition-all duration-300 ease-in-out" style={{ left: sidebarWidth, width: `calc(100% - ${sidebarWidth})`, height: TOPBAR_HEIGHT }}>
-                    <Topbar onToggleSidebar={toggleSidebar} isSidebarCollapsed={isSidebarCollapsed} onUserIconClick={handleUserIconClick} pageSubtitle={pageTitle} userIconRef={userIconRef} onNotificationIconClick={handleToggleNotificationPopup} notificationIconRef={notificationIconRef} hasUnreadNotifications={hasUnreadNotifications} />
+                    <Topbar onToggleSidebar={toggleSidebar} isSidebarCollapsed={isSidebarCollapsed} onUserIconClick={handleUserIconClick} breadcrumbs={finalBreadcrumbs} userIconRef={userIconRef} onNotificationIconClick={handleToggleNotificationPopup} notificationIconRef={notificationIconRef} hasUnreadNotifications={hasUnreadNotifications} />
                 </div>
                 <div className="flex flex-col flex-grow" style={{ paddingTop: TOPBAR_HEIGHT }}>
                     <main className="content-area flex-grow p-3 m-6 bg-white dark:bg-gray-900 rounded-lg shadow-md">{children}</main>
@@ -205,10 +192,27 @@ export default function AdminLayout({ children, activeItem, pageTitle }) {
                 </div>
             </div>
             <div ref={adminPopupRef}>
-                <AdminPopup show={showAdminPopup} onLogoutClick={handleLogoutClick} isNavigating={isProfileNavigating} onNavigate={handleProfileNav} />
+                <AdminPopup 
+                    show={showAdminPopup} 
+                    onLogoutClick={handleLogoutClick} 
+                    isNavigating={isProfileNavigating} 
+                    onNavigate={handleProfileNav}
+                    adminName={profile ? `${profile.firstName} ${profile.lastName}` : 'Admin'}
+                    adminEmail={profile?.email || 'admin@example.com'}
+                />
             </div>
             <div ref={notificationPopupRef}>
-                <NotificationPopup show={showNotificationPopup} notifications={notifications} onMarkAllRead={handleMarkAllRead} onApprove={handleApproveNotification} onDeny={handleDenyNotification} onMarkAsRead={handleMarkSingleAsRead} anchorRef={notificationIconRef} />
+                <NotificationPopup 
+                    show={showNotificationPopup} 
+                    notifications={notifications} 
+                    changeRequests={changeRequests}
+                    onMarkAllRead={handleMarkAllRead} 
+                    onApprove={handleApproveNotification} 
+                    onDeny={handleDenyNotification} 
+                    onMarkAsRead={handleMarkSingleAsRead} 
+                    anchorRef={notificationIconRef}
+                    onClose={() => setShowNotificationPopup(false)}
+                />
             </div>
             <LogoutAlert show={showLogoutAlert} onClose={handleCloseLogoutAlert} onConfirmLogout={handleConfirmLogout} />
         </div>

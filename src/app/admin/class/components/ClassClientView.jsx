@@ -6,24 +6,34 @@ import { useRouter } from 'next/navigation';
 import useSWR from 'swr';
 import { useSession } from 'next-auth/react';
 import { classService } from '@/services/class.service';
-import ClassPageSkeleton from './ClassPageSkeleton'; // Import the skeleton component
+import ClassPageSkeleton from './ClassPageSkeleton';
+import SuccessPopup from '../../profile/components/SuccessPopup';
 
 // --- Reusable Icon and Spinner Components ---
 const Spinner = () => ( <svg className="animate-spin h-5 w-5 text-gray-500 dark:text-gray-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> );
 const EditIcon = ({ className = "w-[14px] h-[14px]" }) => ( <svg className={className} width="14" height="14" viewBox="0 0 17 17" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M8.06671 2.125H4.95837C3.00254 2.125 2.12504 3.0025 2.12504 4.95833V12.0417C2.12504 13.9975 3.00254 14.875 4.95837 14.875H12.0417C13.9975 14.875 14.875 13.9975 14.875 12.0417V8.93333" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/><path d="M10.6579 3.2658L6.28042 7.64327C6.10542 7.81827 5.93042 8.15055 5.89125 8.3928L5.64958 10.112C5.56625 10.7037 6.01958 11.157 6.61125 11.0737L8.33042 10.832C8.57292 10.7928 8.90542 10.6178 9.08042 10.4428L13.4579 6.0653C14.2662 5.25705 14.5796 4.26827 13.4579 3.14662C12.3362 2.03205 11.3479 2.45705 10.6579 3.2658Z" stroke="currentColor" strokeWidth="1.2" strokeMiterlimit="10" strokeLinecap="round" strokeLinejoin="round"/><path d="M9.8999 4.02502C10.2716 5.66752 11.0583 6.45419 12.7008 6.82585" stroke="currentColor" strokeWidth="1.2" strokeMiterlimit="10" strokeLinecap="round" strokeLinejoin="round"/></svg> );
 const ArchiveIcon = ({ className = "w-[14px] h-[14px]" }) => ( <svg className={className} width="14" height="14" viewBox="0 0 17 17" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M14.1667 5.66667V12.0417C14.1667 13.9975 13.2892 14.875 11.3334 14.875H5.66671C3.71087 14.875 2.83337 13.9975 2.83337 12.0417V5.66667" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/><path d="M14.875 2.125H2.125L2.12504 5.66667H14.875V2.125Z" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/><path d="M7.79163 8.5H9.20829" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/></svg> );
 
-const fetcher = ([key, token]) => classService.getAllClasses(token);
+// Define fetcher for SWR
+const classFetcher = ([key, token]) => classService.getAllClasses(token);
 
-export default function ClassClientView({ initialClasses }) {
+// Mapping from shiftId to the full descriptive name used in the UI.
+const shiftIdToFullNameMap = {
+    1: 'Morning Shift',
+    2: 'Noon Shift',
+    3: 'Afternoon Shift',
+    4: 'Evening Shift',
+    5: 'Weekend Shift'
+};
+
+export default function ClassClientView({ initialClasses, initialDepartments }) {
     const router = useRouter();
     const { data: session } = useSession();
-
     const [isLoading, setIsLoading] = useState(true);
 
-    const { data, error } = useSWR(
+    const { data: classes, error: classesError, mutate: mutateClasses } = useSWR(
         session?.accessToken ? ['/api/v1/class', session.accessToken] : null,
-        fetcher,
+        classFetcher,
         {
             fallbackData: initialClasses,
             revalidateOnFocus: true,
@@ -32,10 +42,15 @@ export default function ClassClientView({ initialClasses }) {
         }
     );
 
-    const [classData, setClassData] = useState(initialClasses);
+    const departments = initialDepartments;
+    const departmentsError = !initialDepartments;
+
+    const [classData, setClassData] = useState([]);
     const [isPending, startTransition] = useTransition();
     const [rowLoadingId, setRowLoadingId] = useState(null);
     const [showCreatePopup, setShowCreatePopup] = useState(false);
+    const [showSuccessPopup, setShowSuccessPopup] = useState(false);
+    const [successPopupMessage, setSuccessPopupMessage] = useState('');
     const [currentPage, setCurrentPage] = useState(1);
     const itemsPerPageOptions = [5, 10, 20, 50];
     const [itemsPerPage, setItemsPerPage] = useState(itemsPerPageOptions[0]);
@@ -45,8 +60,8 @@ export default function ClassClientView({ initialClasses }) {
     const [searchTexts, setSearchTexts] = useState({ name: '', generation: '', group: '', major: '', degrees: '', faculty: '', semester: '', shift: '' });
 
     useEffect(() => {
-        if (data) {
-            const formattedData = data.map(item => ({
+        if (classes) {
+            const formattedData = classes.map(item => ({
                 id: item.classId,
                 name: item.className,
                 generation: item.generation,
@@ -55,17 +70,26 @@ export default function ClassClientView({ initialClasses }) {
                 degrees: item.degreeName,
                 faculty: item.department?.name || 'N/A',
                 semester: item.semester,
-                shift: item.shift?.name || 'N/A',
+                shift: item.shift ? shiftIdToFullNameMap[item.shift.shiftId] || 'N/A' : 'N/A',
                 status: item.archived ? 'archived' : 'active',
             }));
             setClassData(formattedData);
         }
-    }, [data]);
+    }, [classes]);
 
-    const handleSaveNewClass = (newClassData) => {
-        const newId = classData.length > 0 ? Math.max(...classData.map(item => item.id)) + 1 : 1;
-        setClassData(prevData => [...prevData, { id: newId, ...newClassData, status: 'active' }]);
-        setCurrentPage(1);
+    const handleSaveNewClass = async (newClassPayload) => {
+        if (!session?.accessToken) {
+            console.error("Cannot create class: not authenticated.");
+            return;
+        }
+        try {
+            await classService.createClass(newClassPayload, session.accessToken);
+            mutateClasses(); 
+            setSuccessPopupMessage(`Class "${newClassPayload.className}" has been created successfully.`);
+            setShowSuccessPopup(true);
+        } catch (error) {
+            console.error("Failed to create class:", error);
+        }
     };
 
     const handleSort = (column) => {
@@ -84,7 +108,7 @@ export default function ClassClientView({ initialClasses }) {
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="size-4 ml-1"><path strokeLinecap="round" strokeLinejoin="round" d="m4.5 15.75 7.5-7.5 7.5 7.5" /></svg> :
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="size-4 ml-1"><path strokeLinecap="round" strokeLinejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" /></svg>;
         }
-        return <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="size-4 ml-1 opacity-40"><path strokeLinecap="round" strokeLinelinejoin="round" d="M8.25 15 12 18.75 15.75 15m-7.5-6L12 5.25 15.75 9" /></svg>;
+        return <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="size-4 ml-1 opacity-40"><path strokeLinecap="round" strokeLinejoin="round" d="M8.25 15 12 18.75 15.75 15m-7.5-6L12 5.25 15.75 9" /></svg>;
     };
     
     const handleSearchChange = (column, value) => {
@@ -137,6 +161,7 @@ export default function ClassClientView({ initialClasses }) {
 
     const goToNextPage = () => setCurrentPage((prev) => Math.min(prev + 1, totalPages));
     const goToPreviousPage = () => setCurrentPage((prev) => Math.max(prev - 1, 1));
+    const goToPage = (pageNumber) => setCurrentPage(pageNumber);
     const handleItemsPerPageChange = (e) => {
         setItemsPerPage(Number(e.target.value));
         setCurrentPage(1);
@@ -160,12 +185,18 @@ export default function ClassClientView({ initialClasses }) {
         return <ClassPageSkeleton />;
     }
 
-     if (error) {
+     if (classesError) {
         return <div className="p-6 text-center text-red-500">Failed to load class data. Please try again.</div>
     }
 
     return (
         <div className="p-6 dark:text-white">
+            <SuccessPopup
+                show={showSuccessPopup}
+                onClose={() => setShowSuccessPopup(false)}
+                title="Class Created"
+                message={successPopupMessage}
+            />
             <div className="flex items-center justify-between">
                 <h1 className="text-lg font-bold">Class List</h1>
             </div>
@@ -292,11 +323,17 @@ export default function ClassClientView({ initialClasses }) {
                 </div>
                 <ul className="inline-flex -space-x-px rtl:space-x-reverse text-xs h-8">
                     <li><button onClick={goToPreviousPage} disabled={currentPage === 1} className="flex items-center justify-center px-3 h-8 ms-0 leading-tight text-gray-500 bg-white border border-gray-300 rounded-s-lg hover:bg-gray-100 hover:text-gray-700 dark:bg-gray-800 dark:border-gray-700 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-white disabled:opacity-50">Previous</button></li>
-                    {getPageNumbers().map((pageNumber) => (<li key={pageNumber}><button onClick={() => {}} className={`flex items-center justify-center px-3 h-8 leading-tight border border-gray-300 ${currentPage === pageNumber ? 'text-blue-600 bg-blue-50 dark:bg-gray-700 dark:text-white' : 'text-gray-500 bg-white hover:bg-gray-100 dark:bg-gray-800 dark:hover:bg-gray-700'}`}>{pageNumber}</button></li>))}
+                    {getPageNumbers().map((pageNumber) => (<li key={pageNumber}><button onClick={() => goToPage(pageNumber)} className={`flex items-center justify-center px-3 h-8 leading-tight border border-gray-300 ${currentPage === pageNumber ? 'text-blue-600 bg-blue-50 dark:bg-gray-700 dark:text-white' : 'text-gray-500 bg-white hover:bg-gray-100 dark:bg-gray-800 dark:hover:bg-gray-700'}`}>{pageNumber}</button></li>))}
                     <li><button onClick={goToNextPage} disabled={currentPage === totalPages} className="flex items-center justify-center px-3 h-8 leading-tight text-gray-500 bg-white border border-gray-300 rounded-e-lg hover:bg-gray-100 hover:text-gray-700 dark:bg-gray-800 dark:border-gray-700 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-white disabled:opacity-50">Next</button></li>
                 </ul>
             </nav>
-            <ClassCreatePopup isOpen={showCreatePopup} onClose={() => setShowCreatePopup(false)} onSave={handleSaveNewClass} />
+            <ClassCreatePopup 
+                isOpen={showCreatePopup} 
+                onClose={() => setShowCreatePopup(false)} 
+                onSave={handleSaveNewClass}
+                departments={departments || []}
+                departmentsError={departmentsError}
+            />
         </div>
     );
 }

@@ -2,54 +2,98 @@ import { Suspense } from 'react';
 import InstructorLayout from '@/components/InstructorLayout';
 import SchedulePageSkeleton from './components/SchedulePageSkeleton';
 import InstructorScheduleClientView from './components/InstructorScheduleClientView';
+import { getServerSession } from 'next-auth/next';
+import { authOptions } from '@/app/api/auth/[...nextauth]/route';
+import { scheduleService } from '@/services/schedule.service';
+import { shiftService } from '@/services/shift.service';
 
-// --- SERVER-SIDE DATA FETCHING ---
+/**
+ * Fetches and processes the schedule for the currently logged-in instructor.
+ */
 const fetchScheduleData = async () => {
-  // In a real app, this would be a database query for a specific instructor's schedule
-  const scheduleData = {
-    'Monday': {
-        '07:00 - 10:00': { subject: '32/27 IT', year: 'Year 2', semester: 'Semester 1', timeDisplay: '07:00 - 10:00' },
-        '17:30 - 20:30': { subject: '32/34 MG', year: 'Year 2', semester: 'Semester 1', timeDisplay: '17:30 - 20:30' },
-    },
-    'Tuesday': {},
-    'Wednesday': {
-        '10:30 - 13:30': { subject: '33/29 FA', year: 'Year 1', semester: 'Semester 1', timeDisplay: '10:30 - 13:30' },
-    },
-    'Thursday': {
-        '14:00 - 17:00': { subject: '32/98 law', year: 'Year 2', semester: 'Semester 1', timeDisplay: '14:00 - 17:00' },
-    },
-    'Friday': {
-        '07:00 - 10:00': { subject: '31/35 MG', year: 'Year 3', semester: 'Semester 1', timeDisplay: '07:00 - 10:00' },
-        '17:30 - 20:30': { subject: '30/11 IT', year: 'Year 4', semester: 'Semester 2', timeDisplay: '17:30 - 20:30' },
-    },
-    'Saturday': {},
-    'Sunday': {},
-  };
-  
-  const instructorDetails = {
-      instructorName: "Keo Linda",
-      publicDate: "2025-06-22 13:11:46"
-  };
+  const session = await getServerSession(authOptions);
+  const token = session?.accessToken;
 
-  // Simulate network delay
-  await new Promise(resolve => setTimeout(resolve, 500)); 
-  return { scheduleData, instructorDetails };
+  if (!token) {
+      console.error("Instructor Schedule Page: Not authenticated.");
+      return { scheduleData: {}, instructorDetails: {}, allShifts: [] };
+  }
+
+  try {
+      const [apiSchedulesResponse, allShifts] = await Promise.all([
+          scheduleService.getMySchedule(token),
+          shiftService.getAllShifts(token)
+      ]);
+
+      const apiSchedules = Array.isArray(apiSchedulesResponse) ? apiSchedulesResponse : (apiSchedulesResponse.payload || []);
+
+      const scheduleData = {};
+      const daysOfWeek = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+      
+      daysOfWeek.forEach(day => {
+          scheduleData[day] = {};
+      });
+
+      apiSchedules.forEach(schedule => {
+          const timeSlotKey = `${schedule.shift.startTime.slice(0, 5)} - ${schedule.shift.endTime.slice(0, 5)}`;
+          
+          // --- THIS IS THE FIX ---
+          // Check if dayDetails exists and is an array before processing
+          if (!schedule.dayDetails || !Array.isArray(schedule.dayDetails)) {
+              return; // Skip this schedule if dayDetails is missing or not an array
+          }
+          // Create the list of days from the dayDetails array
+          const days = schedule.dayDetails.map(dayDetail => dayDetail.dayOfWeek.toUpperCase());
+          
+          const mapSemesterToYear = (semester) => {
+              if (!semester || typeof semester !== 'string') return '';
+              const semesterNumber = parseInt(semester.replace(/[^0-9]/g, ''), 10);
+              if (isNaN(semesterNumber)) return '';
+              return Math.ceil(semesterNumber / 2);
+          };
+
+          const academicYear = mapSemesterToYear(schedule.semester);
+
+          days.forEach(dayString => {
+              const formattedDay = dayString.charAt(0) + dayString.slice(1).toLowerCase();
+              if (scheduleData[formattedDay]) {
+                  scheduleData[formattedDay][timeSlotKey] = {
+                      subject: schedule.className,
+                      year: `Year ${academicYear}`, 
+                      semester: schedule.semester,
+                      timeDisplay: timeSlotKey,
+                      room: schedule.roomName
+                  };
+              }
+          });
+      });
+      
+      const instructorDetails = {
+          instructorName: session.user.name,
+          publicDate: new Date().toISOString().slice(0, 19).replace('T', ' ')
+      };
+
+      return { scheduleData, instructorDetails, allShifts };
+
+  } catch (error) {
+      console.error("Failed to fetch instructor schedule:", error.message);
+      return { scheduleData: {}, instructorDetails: { instructorName: "Error", publicDate: "" }, allShifts: [] };
+  }
 };
 
 /**
- * The main page component is now an async Server Component.
+ * The main page component for the instructor's schedule.
  */
 export default async function InstructorSchedulePage() {
-    // Data is fetched on the server before the page is sent to the client.
-    const { scheduleData, instructorDetails } = await fetchScheduleData();
+    const { scheduleData, instructorDetails, allShifts } = await fetchScheduleData();
 
     return (
         <InstructorLayout activeItem="schedule" pageTitle="Schedule">
             <Suspense fallback={<SchedulePageSkeleton />}>
-                {/* The Client Component is rendered here, receiving all server-fetched data as props. */}
                 <InstructorScheduleClientView
                     initialScheduleData={scheduleData}
                     instructorDetails={instructorDetails}
+                    allShifts={allShifts} 
                 />
             </Suspense>
         </InstructorLayout>

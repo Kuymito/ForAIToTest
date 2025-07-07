@@ -8,25 +8,22 @@ import InstructorPopup from 'src/app/instructor/profile/components/InstructorPop
 import LogoutAlert from '@/components/LogoutAlert';
 import Footer from '@/components/Footer';
 import InstructorNotificationPopup from '@/app/instructor/notification/InstructorNotificationPopup';
-import { signOut } from 'next-auth/react';
+import { signOut, useSession } from 'next-auth/react';
+import useSWR, { mutate } from 'swr';
+import { authService } from '@/services/auth.service';
+import { notificationService } from '@/services/notification.service';
 import { moul } from './fonts';
 
 const TOPBAR_HEIGHT = '90px';
+const profileFetcher = ([, token]) => authService.getProfile(token);
+const notificationsFetcher = ([, token]) => notificationService.getNotifications(token);
 
-export default function InstructorLayout({ children, activeItem, pageTitle }) {
+export default function InstructorLayout({ children, activeItem, pageTitle, breadcrumbs }) {
     const [showAdminPopup, setShowAdminPopup] = useState(false);
     const [showLogoutAlert, setShowLogoutAlert] = useState(false);
     const [showInstructorNotificationPopup, setShowInstructorNotificationPopup] = useState(false);
-    const [instructorNotifications, setInstructorNotifications] = useState([]);
     const [isLoading, setIsLoading] = useState(false);
-    const [navigatingTo, setNavigatingTo] = useState(null);
-    const notificationPopupRef = useRef(null);
-    const notificationIconRef = useRef(null);
-    const adminPopupRef = useRef(null);
-    const userIconRef = useRef(null);
-    const router = useRouter();
-    const pathname = usePathname();
-    const [ isProfileNavigating, setIsProfileNavigating] = useState(false);
+    const [isProfileNavigating, setIsProfileNavigating] = useState(false);
     const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(() => {
         if (typeof window !== 'undefined') {
             return localStorage.getItem('sidebarCollapsed') === 'true';
@@ -34,7 +31,34 @@ export default function InstructorLayout({ children, activeItem, pageTitle }) {
         return false;
     });
 
+    const notificationPopupRef = useRef(null);
+    const notificationIconRef = useRef(null);
+    const adminPopupRef = useRef(null);
+    const userIconRef = useRef(null);
+    const router = useRouter();
+    const pathname = usePathname();
+    const [navigatingTo, setNavigatingTo] = useState(null);
+    
+    const { data: session } = useSession();
+    const token = session?.accessToken;
+
+    const { data: profile } = useSWR(
+        token ? ['/api/profile', token] : null,
+        profileFetcher
+    );
+
+    const { data: instructorNotifications, mutate: mutateInstructorNotifications } = useSWR(
+        token ? ['/api/notifications', token] : null,
+        notificationsFetcher,
+        {
+            refreshInterval: 5000,
+        }
+    );
+
+    const finalBreadcrumbs = breadcrumbs || [{ label: pageTitle }];
+
     const toggleSidebar = () => setIsSidebarCollapsed(!isSidebarCollapsed);
+
     const handleUserIconClick = (event) => { 
         event.stopPropagation();
         if (showInstructorNotificationPopup) {
@@ -42,6 +66,7 @@ export default function InstructorLayout({ children, activeItem, pageTitle }) {
         }
         setShowAdminPopup(prev => !prev); 
     };
+    
     const handleLogoutClick = () => {
         setShowAdminPopup(false);
         setShowLogoutAlert(true);
@@ -53,7 +78,7 @@ export default function InstructorLayout({ children, activeItem, pageTitle }) {
         setIsLoading(true);
         signOut({ callbackUrl: '/api/auth/login' });
     };
-    
+
     const handleNavItemClick = (item) => {
         if (pathname !== item.href) {
             setNavigatingTo(item.id);
@@ -69,17 +94,22 @@ export default function InstructorLayout({ children, activeItem, pageTitle }) {
         setShowInstructorNotificationPopup(prev => !prev);
     };
     
-    const handleMarkInstructorNotificationAsRead = (notificationId) => {
-        setInstructorNotifications(prev =>
-            prev.map(n => n.id === notificationId ? { ...n, isUnread: false } : n)
-        );
+    const handleMarkInstructorNotificationAsRead = async (notificationId) => {
+        await notificationService.markNotificationAsRead(notificationId, token);
+        mutateInstructorNotifications();
+        mutate(['/api/v1/schedule', token]);
     };
 
-    const handleMarkAllInstructorNotificationsAsRead = () => {
-        setInstructorNotifications(prev => prev.map(n => ({ ...n, isUnread: false })));
+    const handleMarkAllInstructorNotificationsAsRead = async () => {
+        const unreadIds = instructorNotifications?.filter(n => !n.read).map(n => n.notificationId) || [];
+        if (unreadIds.length > 0) {
+            await Promise.all(unreadIds.map(id => notificationService.markNotificationAsRead(id, token)));
+            mutateInstructorNotifications();
+            mutate(['/api/v1/schedule', token]);
+        }
     };
 
-    const hasUnreadInstructorNotifications = instructorNotifications.some(n => n.isUnread);
+    const hasUnreadInstructorNotifications = instructorNotifications?.some(n => !n.read);
 
     const handleProfileNav = (path) => {
         if (isProfileNavigating) {
@@ -119,21 +149,12 @@ export default function InstructorLayout({ children, activeItem, pageTitle }) {
     }, [showAdminPopup, showInstructorNotificationPopup]);
 
     useEffect(() => {
-        const mockInstructorNotifications = [
-            { id: 1, avatarUrl: '/images/kok.png', message: 'Your request for Room A1 has been approved by Admin.', timestamp: '5m', isUnread: true, type: 'request_approved', details: { adminName: 'Admin' } },
-            { id: 2, avatarUrl: '/images/kok.png', message: 'Your request for Room C2 has been denied due to a conflict.', timestamp: '1h', isUnread: true, type: 'request_denied', details: { adminName: 'Admin' } },
-            { id: 3, avatarUrl: '/images/kok.png', message: 'A new schedule has been published for your classes.', timestamp: '3h', isUnread: false, type: 'info', details: { adminName: 'Admin' } },
-        ];
-        setInstructorNotifications(mockInstructorNotifications);
-    }, []);
-
-    useEffect(() => {
         if (isProfileNavigating) {
             setIsProfileNavigating(false);
         }
         setNavigatingTo(null);
-    }, [pathname]); 
-
+    }, [pathname]);
+    
     if (isLoading) {
         return (
             <div className="min-h-screen w-screen flex flex-col items-center justify-center bg-[#E0E4F3] text-center p-6">
@@ -169,7 +190,6 @@ export default function InstructorLayout({ children, activeItem, pageTitle }) {
                 onNavItemClick={handleNavItemClick}
                 navigatingTo={navigatingTo}
             />
-
             <div
                 className="flex flex-col flex-grow transition-all duration-300 ease-in-out"
                 style={{
@@ -191,7 +211,7 @@ export default function InstructorLayout({ children, activeItem, pageTitle }) {
                         onToggleSidebar={toggleSidebar}
                         isSidebarCollapsed={isSidebarCollapsed}
                         onUserIconClick={handleUserIconClick}
-                        pageSubtitle={pageTitle}
+                        breadcrumbs={finalBreadcrumbs}
                         userIconRef={userIconRef}
                         onNotificationIconClick={handleToggleInstructorNotificationPopup}
                         notificationIconRef={notificationIconRef}
@@ -210,9 +230,11 @@ export default function InstructorLayout({ children, activeItem, pageTitle }) {
             <div ref={adminPopupRef}>
                 <InstructorPopup 
                     show={showAdminPopup} 
-                    onLogoutClick={handleLogoutClick} 
+                    onLogoutClick={handleLogoutClick}
                     isNavigating={isProfileNavigating}
                     onNavigate={handleProfileNav}
+                    instructorName={profile ? `${profile.firstName} ${profile.lastName}` : 'Instructor'}
+                    instructorEmail={profile?.email || 'instructor@example.com'}
                 />
             </div>
 

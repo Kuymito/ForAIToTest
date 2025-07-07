@@ -9,7 +9,7 @@ import InstructorRoomPageSkeleton from "./InstructorRoomPageSkeleton";
 import { scheduleService } from '@/services/schedule.service';
 
 // Fetcher for useSWR
-const scheduleFetcher = ([key, token]) => scheduleService.getAllSchedules(token);
+const scheduleFetcher = ([, token]) => scheduleService.getAllSchedules(token);
 
 /**
  * This is the Client Component for the Instructor Room page.
@@ -23,7 +23,10 @@ export default function InstructorRoomClientView({ initialAllRoomsData, building
     const [instructorClasses] = useState(initialInstructorClasses);
     
     const [selectedDay, setSelectedDay] = useState(() => new Date().toLocaleDateString('en-US', { weekday: 'long' }));
-    const [selectedTimeSlot, setSelectedTimeSlot] = useState('07:00-10:00');
+    // UPDATED: Use shift names consistent with the schedule page
+    const TIME_SLOTS = ['Morning Shift', 'Noon Shift', 'Afternoon Shift', 'Evening Shift', 'Weekend Shift'];
+    const [selectedTimeSlot, setSelectedTimeSlot] = useState(TIME_SLOTS[0]);
+    
     const [selectedBuilding, setSelectedBuilding] = useState(Object.keys(buildingLayout)[0] || "");
 
     const [selectedRoomId, setSelectedRoomId] = useState(null);
@@ -52,16 +55,26 @@ export default function InstructorRoomClientView({ initialAllRoomsData, building
         if (apiSchedules && Array.isArray(apiSchedules)) {
             const newScheduleMap = {};
             apiSchedules.forEach(schedule => {
-                if (schedule && schedule.shift) {
-                    const day = schedule.day;
-                    const timeSlot = `${schedule.shift.startTime}-${schedule.shift.endTime}`;
-                    if (!newScheduleMap[day]) newScheduleMap[day] = {};
-                    if (!newScheduleMap[day][timeSlot]) newScheduleMap[day][timeSlot] = {};
-                    newScheduleMap[day][timeSlot][schedule.roomId] = schedule.className;
+                // FIX: Check for the new `dayDetails` array structure
+                if (schedule && schedule.dayDetails && Array.isArray(schedule.dayDetails) && schedule.shift) {
+                    const timeSlot = `${schedule.shift.startTime.substring(0, 5)}-${schedule.shift.endTime.substring(0, 5)}`;
+                    
+                    // Iterate over the `dayDetails` array instead of splitting a string
+                    schedule.dayDetails.forEach(dayDetail => {
+                        const dayName = dayDetail.dayOfWeek.charAt(0).toUpperCase() + dayDetail.dayOfWeek.slice(1).toLowerCase();
+                        if (!newScheduleMap[dayName]) {
+                            newScheduleMap[dayName] = {};
+                        }
+                        if (!newScheduleMap[dayName][timeSlot]) {
+                            newScheduleMap[dayName][timeSlot] = {};
+                        }
+                        newScheduleMap[dayName][timeSlot][schedule.roomId] = schedule.className;
+                    });
                 }
             });
             setScheduleMap(newScheduleMap);
         } else if (apiSchedules) {
+            // Handle cases where the initial data might still be in the old format
             setScheduleMap(apiSchedules);
         }
     }, [apiSchedules]);
@@ -74,14 +87,23 @@ export default function InstructorRoomClientView({ initialAllRoomsData, building
         resetSelection();
     }, [initialAllRoomsData, buildingLayout]);
 
-    // --- Handlers ---
+    // --- Event Handlers ---
     const resetSelection = () => { setSelectedRoomId(null); setRoomDetails(null); };
     const handleDayChange = (day) => { setSelectedDay(day); resetSelection(); };
     const handleTimeChange = (event) => { setSelectedTimeSlot(event.target.value); resetSelection(); };
     const handleBuildingChange = (event) => { setSelectedBuilding(event.target.value); resetSelection(); };
 
+    const shiftNameToTimeRange = {
+        'Morning Shift': '07:00-10:00',
+        'Noon Shift': '10:30-13:30',
+        'Afternoon Shift': '14:00-17:00',
+        'Evening Shift': '17:30-20:30',
+        'Weekend Shift': '07:30-17:00'
+    };
+
     const handleRoomClick = async (roomId) => {
-        const isOccupied = scheduleMap[selectedDay]?.[selectedTimeSlot]?.[roomId];
+        const timeRange = shiftNameToTimeRange[selectedTimeSlot];
+        const isOccupied = scheduleMap[selectedDay]?.[timeRange]?.[roomId];
         if (isOccupied) return; // Prevent clicking occupied rooms
 
         setSelectedRoomId(roomId);
@@ -108,9 +130,7 @@ export default function InstructorRoomClientView({ initialAllRoomsData, building
     // --- Derived Data and Constants ---
     const floors = buildings[selectedBuilding] || [];
     const WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
-    const TIME_SLOTS = ['07:00-10:00', '10:30-13:30', '14:00-17:00', '17:30-20:30'];
-    const formatTimeSlot = (time) => time.replace('-', ' to ');
-
+    
     const textLabelRoom = "font-medium text-base leading-7 text-slate-700 dark:text-slate-300 tracking-[-0.01em]";
     const textValueRoomDisplay = "font-medium text-base leading-7 text-slate-900 dark:text-slate-100 tracking-[-0.01em]";
     const textLabelDefault = "font-medium text-sm leading-6 text-slate-700 dark:text-slate-300 tracking-[-0.01em]";
@@ -145,50 +165,50 @@ export default function InstructorRoomClientView({ initialAllRoomsData, building
     return (
     <>
       {showSuccessAlert && ( <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-60 "><SuccessAlert show={showSuccessAlert} title="Request was sent Successfully" messageLine1={`Room ${roomDetails?.name || ""} Your request was sent Successfully`} messageLine2="" confirmButtonText="Close" onConfirm={() => setShowSuccessAlert(false)} onClose={() => setShowSuccessAlert(false)}/></div>)}
-      <RequestChangeForm isOpen={isFormOpen} onClose={() => setIsFormOpen(false)} onSave={handleSaveRequest} roomDetails={roomDetails} instructorClasses={instructorClasses} selectedDay={selectedDay} selectedTime={selectedTimeSlot}/>
+      <RequestChangeForm isOpen={isFormOpen} onClose={() => setIsFormOpen(false)} onSave={handleSaveRequest} roomDetails={roomDetails} instructorClasses={instructorClasses} selectedDay={selectedDay} selectedTime={shiftNameToTimeRange[selectedTimeSlot]}/>
       <div className="p-4 sm:p-6 min-h-full">
         <div className="mb-4 w-full"><h2 className="text-xl font-semibold text-slate-800 dark:text-white">Room</h2><hr className="border-t border-slate-300 dark:border-slate-700 mt-3" /></div>
-        <div className="flex flex-col gap-4 mb-4">
-          <div className="flex flex-col sm:flex-row items-center justify-between border-b dark:border-gray-600 pb-3 gap-4">
-              <div className="flex rounded-lg border border-gray-300 dark:border-gray-600 overflow-hidden w-full sm:w-auto">
-                  {WEEKDAYS.map(day => (<button key={day} onClick={() => handleDayChange(day)} className={`px-3.5 py-1.5 text-sm font-medium transition-colors w-full ${selectedDay === day ? 'bg-blue-600 text-white shadow' : 'border-r dark:border-r-gray-500 last:border-r-0 hover:bg-gray-100 dark:hover:bg-gray-700'}`}>{day.substring(0,3)}</button>))}
-              </div>
-              <div className="flex items-center gap-2 w-full sm:w-auto">
-                  <label htmlFor="time-select" className="text-sm font-medium dark:text-gray-300">Time:</label>
-                  <select id="time-select" value={selectedTimeSlot} onChange={handleTimeChange} className="p-2 text-sm border border-gray-300 rounded-md dark:bg-gray-800 dark:border-gray-600 dark:text-gray-200 focus:ring-blue-500 focus:border-blue-500 w-full">
-                      {TIME_SLOTS.map(t => <option key={t} value={t}>{formatTimeSlot(t)}</option>)}
-                  </select>
-              </div>
-          </div>
-          <div className="flex items-center gap-2">
-                <select value={selectedBuilding} onChange={handleBuildingChange} className="text-sm font-semibold text-slate-700 bg-white border border-slate-300 dark:text-slate-200 dark:bg-slate-800 dark:border-slate-600 rounded-md px-3 py-2 focus:outline-none focus:ring-1 focus:ring-blue-500">
-                    {Object.keys(buildings).map((building) => <option key={building} value={building}>{building}</option>)}
-                </select>
-                <hr className="flex-1 border-t border-slate-300 dark:border-slate-700" />
-          </div>
-        </div>
         <div className="flex flex-col lg:flex-row gap-6">
             <div className="flex-1 min-w-0">
+                <div className="flex flex-col sm:flex-row items-center justify-between border-b dark:border-gray-600 pb-3 gap-4 mb-4">
+                    <div className="flex rounded-lg border border-gray-300 dark:border-gray-600 dark:text-gray-300 overflow-hidden w-full sm:w-auto">
+                        {WEEKDAYS.map(day => (<button key={day} onClick={() => handleDayChange(day)} className={`px-3.5 py-1.5 text-sm font-medium transition-colors w-full ${selectedDay === day ? 'bg-blue-600 text-white shadow' : 'border-r dark:border-r-gray-500 last:border-r-0 hover:bg-gray-100 dark:hover:bg-gray-700'}`}>{day.substring(0,3)}</button>))}
+                    </div>
+                    <div className="flex items-center gap-2 w-full sm:w-auto">
+                        <label htmlFor="time-select" className="text-sm font-medium dark:text-gray-300">Time:</label>
+                        <select id="time-select" value={selectedTimeSlot} onChange={handleTimeChange} className="p-2 text-sm border border-gray-300 rounded-md dark:bg-gray-800 dark:border-gray-600 dark:text-gray-200 focus:ring-blue-500 focus:border-blue-500 w-full">
+                            {TIME_SLOTS.map(t => <option key={t} value={t}>{t}</option>)}
+                        </select>
+                    </div>
+                </div>
+                <div className="flex items-center gap-2 mb-3 sm:mb-4">
+                      <select value={selectedBuilding} onChange={handleBuildingChange} className="text-sm font-semibold text-slate-700 bg-white border border-slate-300 dark:text-slate-200 dark:bg-slate-800 dark:border-slate-600 rounded-md px-3 py-2 focus:outline-none focus:ring-1 focus:ring-blue-500">
+                          {Object.keys(buildings).map((building) => <option key={building} value={building}>{building}</option>)}
+                      </select>
+                      <hr className="flex-1 border-t border-slate-300 dark:border-slate-700" />
+                </div>
                 <div className="space-y-4">
                     {floors.map(({ floor, rooms }) => (
                         <div key={floor} className="space-y-3">
-                            <div className="flex items-center gap-2 mb-2"><h4 className="text-xs sm:text-sm font-medium text-slate-600 dark:text-slate-400">Floor {floor}</h4><hr className="flex-1 border-t border-slate-300 dark:border-slate-700" /></div>
+                            <div className="flex items-center gap-2 mb-2"><h4 className="text-xs sm:text-sm font-medium text-slate-600 dark:text-slate-400 whitespace-nowrap">Floor {floor}</h4><hr className="flex-1 border-t border-slate-300 dark:border-slate-700" /></div>
                             <div className={`grid gap-3 sm:gap-4 ${getGridColumnClasses(selectedBuilding, floor)}`}>
                                 {rooms.map((roomName) => {
                                     const room = Object.values(allRoomsData).find(r => r.name === roomName);
                                     if (!room) return null;
-                                    const scheduledClass = scheduleMap[selectedDay]?.[selectedTimeSlot]?.[room.id];
-                                    const isOccupied = !!scheduledClass;
                                     const isSelected = selectedRoomId === room.id;
+                                    const timeRange = shiftNameToTimeRange[selectedTimeSlot];
+                                    const scheduledClass = scheduleMap[selectedDay]?.[timeRange]?.[room.id];
+                                    const isOccupied = !!scheduledClass;
                                     return (
-                                        <div key={room.id} onClick={() => handleRoomClick(room.id)} className={`h-[90px] sm:h-[100px] border rounded-md flex flex-col transition-all duration-150 shadow-sm ${getRoomColSpan(selectedBuilding, room.name)} ${isOccupied ? 'cursor-not-allowed bg-slate-50 dark:bg-slate-800/50 opacity-70' : 'cursor-pointer hover:shadow-md bg-white dark:bg-slate-800'} ${isSelected ? "border-blue-500 ring-2 ring-blue-500 dark:border-blue-500" : isOccupied ? "border-slate-200 dark:border-slate-700" : "border-slate-300 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-600"}`}>
+                                        <div key={room.id} className={`h-[90px] sm:h-[100px] border rounded-md flex flex-col transition-all duration-150 shadow-sm ${getRoomColSpan(selectedBuilding, room.name)} ${isOccupied ? 'cursor-not-allowed bg-slate-50 dark:bg-slate-800/50 opacity-70' : 'cursor-pointer hover:shadow-md bg-white dark:bg-slate-800'} ${isSelected ? "border-blue-500 ring-2 ring-blue-500 dark:border-blue-500" : isOccupied ? "border-slate-200 dark:border-slate-700" : "border-slate-300 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-600"}`}
+                                            onClick={() => !isOccupied && handleRoomClick(room.id)}>
                                             <div className={`h-[30px] rounded-t-md flex items-center justify-center px-2 relative border-b ${isSelected ? 'border-b-transparent' : 'border-slate-200 dark:border-slate-600'} ${isOccupied ? 'bg-slate-100 dark:bg-slate-700/60' : 'bg-slate-50 dark:bg-slate-700'}`}>
                                                 <div className={`absolute left-2 top-1/2 -translate-y-1/2 w-2 h-2 rounded-full ${isSelected ? 'bg-blue-500' : isOccupied ? 'bg-red-500' : 'bg-green-500'}`}></div>
-                                                <span className={`ml-3 text-xs sm:text-sm font-medium ${isSelected ? "text-blue-700 dark:text-blue-300" : isOccupied ? "text-slate-500 dark:text-slate-400" : "text-slate-700 dark:text-slate-300"}`}>{room?.name || roomName}</span>
+                                                <span className={`ml-3 text-xs sm:text-sm font-medium ${isSelected ? 'text-blue-700 dark:text-blue-300' : isOccupied ? 'text-slate-500 dark:text-slate-400' : 'text-slate-700 dark:text-slate-300'}`}>{room.name}</span>
                                             </div>
                                             <div className={`flex-1 rounded-b-md p-2 flex flex-col justify-center items-center ${isOccupied ? 'bg-slate-50 dark:bg-slate-800/50' : 'bg-white dark:bg-slate-800'}`}>
-                                                <span className={`font-semibold text-xs ${isOccupied ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400'}`}>{isOccupied ? scheduledClass : 'Available'}</span>
-                                                <span className={`text-xs text-slate-500 dark:text-slate-400 ${isSelected ? "text-slate-600 dark:text-slate-300" : ""} mt-1`}>Capacity: {room?.capacity}</span>
+                                                <span className={`text-xs ${isOccupied ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400'}`}>{isOccupied ? scheduledClass : 'Available'}</span>
+                                                <span className={`text-xs text-slate-500 dark:text-slate-400 ${isSelected ? "text-slate-600 dark:text-slate-300" : ""} mt-1`}>Capacity: {room.capacity}</span>
                                             </div>
                                         </div>
                                     );
@@ -198,6 +218,7 @@ export default function InstructorRoomClientView({ initialAllRoomsData, building
                     ))}
                 </div>
             </div>
+            {/* Details Panel */}
             <div className="w-full lg:w-[320px] shrink-0">
                 <div className="flex items-center gap-2 mb-3 sm:mb-4"><h3 className="text-sm sm:text-base font-semibold text-slate-700 dark:text-slate-300">Details</h3><hr className="flex-1 border-t border-slate-300 dark:border-slate-700" /></div>
                 <div className="flex flex-col items-start gap-6 w-full min-h-[420px] bg-white dark:bg-slate-800 p-4 rounded-lg shadow-lg">

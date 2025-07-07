@@ -9,14 +9,19 @@ import LogoutAlert from '@/components/LogoutAlert';
 import Footer from '@/components/Footer';
 import InstructorNotificationPopup from '@/app/instructor/notification/InstructorNotificationPopup';
 import { usePathname, useRouter } from 'next/navigation';
-import { signOut } from 'next-auth/react';
+import { signOut, useSession } from 'next-auth/react';
+import useSWR, { mutate } from 'swr';
+import { authService } from '@/services/auth.service';
+import { notificationService } from '@/services/notification.service';
 import { moul } from './fonts';
+
+const profileFetcher = ([, token]) => authService.getProfile(token);
+const notificationsFetcher = ([, token]) => notificationService.getNotifications(token);
 
 export default function InstructorDashboardLayout({ children, activeItem, pageTitle }) {
     const [showAdminPopup, setShowAdminPopup] = useState(false);
     const [showLogoutAlert, setShowLogoutAlert] = useState(false);
     const [showInstructorNotificationPopup, setShowInstructorNotificationPopup] = useState(false);
-    const [instructorNotifications, setInstructorNotifications] = useState([]);
     const [isLoading, setIsLoading] = useState(false);
     const [navigatingTo, setNavigatingTo] = useState(null);
     const notificationPopupRef = useRef(null);
@@ -32,6 +37,24 @@ export default function InstructorDashboardLayout({ children, activeItem, pageTi
         }
         return false;
     });
+
+    const { data: session } = useSession();
+    const token = session?.accessToken;
+
+    const { data: profile } = useSWR(
+        token ? ['/api/profile', token] : null,
+        profileFetcher
+    );
+
+    const { data: instructorNotifications, mutate: mutateInstructorNotifications } = useSWR(
+        token ? ['/api/notifications', token] : null,
+        notificationsFetcher,
+        {
+            refreshInterval: 5000,
+        }
+    );
+
+    const breadcrumbs = [{ label: pageTitle }];
 
     useEffect(() => {
         if (typeof window !== 'undefined') {
@@ -73,17 +96,22 @@ export default function InstructorDashboardLayout({ children, activeItem, pageTi
         setShowInstructorNotificationPopup(prev => !prev);
     };
     
-    const handleMarkInstructorNotificationAsRead = (notificationId) => {
-        setInstructorNotifications(prev =>
-            prev.map(n => n.id === notificationId ? { ...n, isUnread: false } : n)
-        );
+    const handleMarkInstructorNotificationAsRead = async (notificationId) => {
+        await notificationService.markNotificationAsRead(notificationId, token);
+        mutateInstructorNotifications();
+        mutate(['/api/v1/schedule', token]);
     };
 
-    const handleMarkAllInstructorNotificationsAsRead = () => {
-        setInstructorNotifications(prev => prev.map(n => ({ ...n, isUnread: false })));
+    const handleMarkAllInstructorNotificationsAsRead = async () => {
+        const unreadIds = instructorNotifications?.filter(n => !n.read).map(n => n.notificationId) || [];
+        if (unreadIds.length > 0) {
+            await Promise.all(unreadIds.map(id => notificationService.markNotificationAsRead(id, token)));
+            mutateInstructorNotifications();
+            mutate(['/api/v1/schedule', token]);
+        }
     };
 
-    const hasUnreadInstructorNotifications = instructorNotifications.some(n => n.isUnread);
+    const hasUnreadInstructorNotifications = instructorNotifications?.some(n => !n.read);
 
     const handleProfileNav = (path) => {
         if (isProfileNavigating) {
@@ -116,15 +144,6 @@ export default function InstructorDashboardLayout({ children, activeItem, pageTi
         document.addEventListener('click', handleClickOutside);
         return () => document.removeEventListener('click', handleClickOutside);
     }, [showAdminPopup, showInstructorNotificationPopup]);
-
-    useEffect(() => {
-        const mockInstructorNotifications = [
-            { id: 1, avatarUrl: '/images/kok.png', message: 'Your request for Room A1 has been approved by Admin.', timestamp: '5m', isUnread: true, type: 'request_approved', details: { adminName: 'Admin' } },
-            { id: 2, avatarUrl: '/images/kok.png', message: 'Your request for Room C2 has been denied due to a conflict.', timestamp: '1h', isUnread: true, type: 'request_denied', details: { adminName: 'Admin' } },
-            { id: 3, avatarUrl: '/images/kok.png', message: 'A new schedule has been published for your classes.', timestamp: '3h', isUnread: false, type: 'info', details: { adminName: 'Admin' } },
-        ];
-        setInstructorNotifications(mockInstructorNotifications);
-    }, []);
 
     useEffect(() => {
         if (isProfileNavigating) {
@@ -189,7 +208,7 @@ export default function InstructorDashboardLayout({ children, activeItem, pageTi
                         onToggleSidebar={toggleSidebar}
                         isSidebarCollapsed={isSidebarCollapsed}
                         onUserIconClick={handleUserIconClick}
-                        pageSubtitle={pageTitle}
+                        breadcrumbs={breadcrumbs}
                         userIconRef={userIconRef}
                         onNotificationIconClick={handleToggleInstructorNotificationPopup}
                         notificationIconRef={notificationIconRef}
@@ -209,6 +228,8 @@ export default function InstructorDashboardLayout({ children, activeItem, pageTi
                     onLogoutClick={handleLogoutClick}
                     isNavigating={isProfileNavigating}
                     onNavigate={handleProfileNav}
+                    instructorName={profile ? `${profile.firstName} ${profile.lastName}` : 'Instructor'}
+                    instructorEmail={profile?.email || 'instructor@example.com'}
                 />
             </div>
             <div ref={notificationPopupRef}>

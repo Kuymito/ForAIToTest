@@ -43,25 +43,26 @@ async function fetchAllRoomsAndSchedules() {
         const [apiRooms, apiSchedules, apiInstructorClasses] = await Promise.all([
             getAllRooms(token),
             scheduleService.getAllSchedules(token),
-            classService.getAllClasses(token) // Assuming this fetches classes for the logged-in instructor
+            classService.getAssignedClasses(token) // Assuming this fetches classes for the logged-in instructor
         ]);
 
         const roomsDataMap = {};
-        const populatedLayout = JSON.parse(JSON.stringify(baseBuildingLayout));
+        const populatedLayout = {};
 
         // Process all rooms to build the main data map and UI layout
         apiRooms.forEach(room => {
             const { roomId, roomName, buildingName, floor, capacity, type, equipment } = room;
 
-            if (populatedLayout[buildingName]) {
-                let floorObj = populatedLayout[buildingName].find(f => f.floor === floor);
-                if (!floorObj) {
-                    floorObj = { floor: floor, rooms: [] };
-                    populatedLayout[buildingName].push(floorObj);
-                }
-                if (!floorObj.rooms.includes(roomName)) {
-                    floorObj.rooms.push(roomName);
-                }
+            if (!populatedLayout[buildingName]) {
+                populatedLayout[buildingName] = [];
+            }
+            let floorObj = populatedLayout[buildingName].find(f => f.floor === floor);
+            if (!floorObj) {
+                floorObj = { floor: floor, rooms: [] };
+                populatedLayout[buildingName].push(floorObj);
+            }
+            if (!floorObj.rooms.includes(roomName)) {
+                 floorObj.rooms.push(roomName);
             }
 
             roomsDataMap[roomId] = {
@@ -75,14 +76,24 @@ async function fetchAllRoomsAndSchedules() {
             };
         });
 
-        // Create a schedule map for quick lookup: { "Monday": { "07:00:00-10:00:00": { roomId: className } } }
+        // Create a schedule map for quick lookup: { "Monday": { "07:00-10:00": { roomId: className } } }
         const scheduleMap = {};
         apiSchedules.forEach(schedule => {
-            const day = schedule.day;
-            const timeSlot = `${schedule.shift.startTime}-${schedule.shift.endTime}`;
-            if (!scheduleMap[day]) scheduleMap[day] = {};
-            if (!scheduleMap[day][timeSlot]) scheduleMap[day][timeSlot] = {};
-            scheduleMap[day][timeSlot][schedule.roomId] = schedule.className;
+            // FIX: Use the new `dayDetails` array from the API response
+            if (schedule && schedule.dayDetails && Array.isArray(schedule.dayDetails) && schedule.shift) {
+                const timeSlot = `${schedule.shift.startTime.substring(0, 5)}-${schedule.shift.endTime.substring(0, 5)}`;
+                
+                schedule.dayDetails.forEach(dayDetail => {
+                    const dayName = dayDetail.dayOfWeek.charAt(0).toUpperCase() + dayDetail.dayOfWeek.slice(1).toLowerCase();
+                    if (!scheduleMap[dayName]) {
+                        scheduleMap[dayName] = {};
+                    }
+                    if (!scheduleMap[dayName][timeSlot]) {
+                        scheduleMap[dayName][timeSlot] = {};
+                    }
+                    scheduleMap[dayName][timeSlot][schedule.roomId] = schedule.className;
+                });
+            }
         });
         
         // Format instructor classes for the request form dropdown
@@ -96,7 +107,7 @@ async function fetchAllRoomsAndSchedules() {
         for (const building in populatedLayout) {
             populatedLayout[building].sort((a, b) => b.floor - a.floor);
         }
-
+        
         return { 
             initialAllRoomsData: roomsDataMap, 
             buildingLayout: populatedLayout,
@@ -117,7 +128,7 @@ export default async function InstructorRoomPage() {
     const { initialAllRoomsData, buildingLayout, initialScheduleMap, initialInstructorClasses } = await fetchAllRoomsAndSchedules();
 
     return (
-        <InstructorLayout activeItem="room" pageTitle="Room Availability">
+        <InstructorLayout activeItem="room" pageTitle="Room">
             <Suspense fallback={<InstructorRoomPageSkeleton />}>
                 <InstructorRoomClientView
                     initialAllRoomsData={initialAllRoomsData}
