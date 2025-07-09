@@ -80,9 +80,31 @@ export const getMySchedule = async (token) => {
     }
 };
 
+const assignRoomToClass = async (scheduleRequest, token) => {
+    const isServer = typeof window === 'undefined';
+    const url = isServer ? `${SERVER_API_URL}/schedule/assign` : `${API_BASE_URL}/schedule/assign`;
+  
+    try {
+      const response = await axios.post(url, scheduleRequest, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+          ...(isServer && { 'ngrok-skip-browser-warning': 'true' })
+        }
+      });
+      return response.data;
+    } catch (error) {
+      // Throw a more detailed error to be caught by the component
+      const errorMessage = error.response?.data?.message || "An unexpected error occurred during assignment.";
+      throw new Error(errorMessage);
+    }
+  };
+
+
 
 // Export the service object
 export const scheduleService = {
   getAllSchedules,
   getMySchedule,
+  assignRoomToClass
 };
