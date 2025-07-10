@@ -65,16 +65,32 @@ const getChangeRequests = async (token) => {
  */
 const submitChangeRequest = async (requestData, token) => {
     try {
-        // Use the local proxy for client-side requests
-        const response = await axios.post(`${LOCAL_API_URL}/change-requests`, requestData, {
-             headers: {
-                'Authorization': `Bearer ${token}`,
-                'Content-Type': 'application/json'
+        // Convert string IDs to numbers if needed
+        const payload = {
+            instructorId: Number(requestData.instructorId),
+            scheduleId: Number(requestData.scheduleId),
+            newRoomId: Number(requestData.newRoomId),
+            effectiveDate: requestData.effectiveDate,
+            description: requestData.description || ''
+        };
+
+        console.log("Final payload being sent:", payload); // Debug log
+
+        const response = await axios.post(
+            `${API_BASE_URL}/change-requests`, // Ensure this matches your backend
+            payload,
+            {
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json',
+                    'ngrok-skip-browser-warning': 'true'
+                }
             }
-        });
+        );
         return response.data;
     } catch (error) {
-        handleError("Submit change request", error);
+        console.error('Submit change request error:', error);
+        throw error;
     }
 };
 

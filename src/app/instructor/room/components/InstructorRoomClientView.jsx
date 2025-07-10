@@ -165,7 +165,15 @@ export default function InstructorRoomClientView({ initialAllRoomsData, building
     return (
     <>
       {showSuccessAlert && ( <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-60 "><SuccessAlert show={showSuccessAlert} title="Request was sent Successfully" messageLine1={`Room ${roomDetails?.name || ""} Your request was sent Successfully`} messageLine2="" confirmButtonText="Close" onConfirm={() => setShowSuccessAlert(false)} onClose={() => setShowSuccessAlert(false)}/></div>)}
-      <RequestChangeForm isOpen={isFormOpen} onClose={() => setIsFormOpen(false)} onSave={handleSaveRequest} roomDetails={roomDetails} instructorClasses={instructorClasses} selectedDay={selectedDay} selectedTime={shiftNameToTimeRange[selectedTimeSlot]}/>
+      <RequestChangeForm 
+        isOpen={isFormOpen} 
+        onClose={() => setIsFormOpen(false)} 
+        onSave={handleSaveRequest} 
+        roomDetails={roomDetails} 
+        instructorClasses={instructorClasses} 
+        selectedDay={selectedDay} 
+        selectedTime={shiftNameToTimeRange[selectedTimeSlot]}
+      />
       <div className="p-4 sm:p-6 min-h-full">
         <div className="mb-4 w-full"><h2 className="text-xl font-semibold text-slate-800 dark:text-white">Room</h2><hr className="border-t border-slate-300 dark:border-slate-700 mt-3" /></div>
         <div className="flex flex-col lg:flex-row gap-6">
