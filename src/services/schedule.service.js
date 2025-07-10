@@ -82,7 +82,7 @@ export const getMySchedule = async (token) => {
 
 const assignRoomToClass = async (scheduleRequest, token) => {
     const isServer = typeof window === 'undefined';
-    const url = isServer ? `${SERVER_API_URL}/schedule/assign` : `${API_BASE_URL}/schedule/assign`;
+    const url = isServer ? `${API_BASE_URL}/schedule/assign` : `${API_BASE_URL}/schedule/assign`;
   
     try {
       const response = await axios.post(url, scheduleRequest, {
@@ -100,11 +100,36 @@ const assignRoomToClass = async (scheduleRequest, token) => {
     }
   };
 
+  /**
+ * Deletes a schedule entry by its ID.
+ * @param {number} scheduleId - The ID of the schedule to delete.
+ * @param {string} token - The authorization token.
+ * @returns {Promise<void>}
+ */
+  const unassignRoomFromClass = async (scheduleId, token) => {
+    const isServer = typeof window === 'undefined';
+    // The endpoint is /api/schedule/{scheduleId} which will be proxied
+    const url = isServer ? `${API_BASE_URL}/schedule/${scheduleId}` : `${API_BASE_URL}/schedule/${scheduleId}`;
+  
+    try {
+      await axios.delete(url, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          ...(isServer && { 'ngrok-skip-browser-warning': 'true' })
+        }
+      });
+    } catch (error) {
+      const errorMessage = error.response?.data?.message || "Failed to delete schedule.";
+      throw new Error(errorMessage);
+    }
+  };
+
 
 
 // Export the service object
 export const scheduleService = {
   getAllSchedules,
   getMySchedule,
-  assignRoomToClass
+  assignRoomToClass,
+  unassignRoomFromClass
 };

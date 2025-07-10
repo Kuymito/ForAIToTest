@@ -51,7 +51,7 @@ const fetchSchedulePageData = async () => {
             '10:30:00': 'Noon Shift',
             '14:00:00': 'Afternoon Shift',
             '17:30:00': 'Evening Shift',
-            '07:30:00': 'Weekend Shift' // Assuming weekend shift starts at 7:30
+            '07:30:00': 'Weekend Shift'
         };
 
         // Transform classes to include the correct shift name
@@ -68,7 +68,7 @@ const fetchSchedulePageData = async () => {
             return cls;
         });
 
-        // UPDATED: Correctly process schedule data from the API's `dayDetails` array
+        // Process schedules
         const scheduleMap = {};
         const dayApiToAbbrMap = {
             MONDAY: 'Mo',
@@ -79,26 +79,53 @@ const fetchSchedulePageData = async () => {
             SATURDAY: 'Sa',
             SUNDAY: 'Su'
         };
+        const unassignedClasses = [];
 
         schedules.forEach(schedule => {
-            if (schedule && schedule.dayDetails && Array.isArray(schedule.dayDetails) && schedule.shift) {
+            if (!schedule.roomId || schedule.roomName === "Unassigned") {
+                // Add to unassigned classes list if not online
+                if (schedule.dayDetails?.some(d => !d.online)) {
+                    unassignedClasses.push(schedule);
+                }
+                return;
+            }
+        
+            // Process assigned schedules
+            if (schedule.dayDetails && Array.isArray(schedule.dayDetails) && schedule.shift) {
                 const timeSlotName = shiftNameMap[schedule.shift.startTime];
                 if (timeSlotName) {
                     schedule.dayDetails.forEach(dayDetail => {
                         const dayAbbr = dayApiToAbbrMap[dayDetail.dayOfWeek.toUpperCase()];
                         if (dayAbbr) {
-                            if (!scheduleMap[dayAbbr]) {
-                                scheduleMap[dayAbbr] = {};
-                            }
-                            if (!scheduleMap[dayAbbr][timeSlotName]) {
-                                scheduleMap[dayAbbr][timeSlotName] = {};
-                            }
-                            scheduleMap[dayAbbr][timeSlotName][schedule.roomId] = schedule.classId;
+                            if (!scheduleMap[dayAbbr]) scheduleMap[dayAbbr] = {};
+                            if (!scheduleMap[dayAbbr][timeSlotName]) scheduleMap[dayAbbr][timeSlotName] = {};
+                            scheduleMap[dayAbbr][timeSlotName][schedule.roomId] = {
+                                classId: schedule.classId,
+                                scheduleId: schedule.scheduleId,
+                                className: schedule.className,
+                                majorName: schedule.majorName
+                            };
                         }
                     });
                 }
             }
         });
+
+        // Combine transformed classes with unassigned classes
+        const combinedClasses = [...transformedClasses, ...unassignedClasses.map(s => ({
+            classId: s.classId,
+            className: s.className,
+            generation: s.year,
+            majorName: s.majorName,
+            degreeName: s.majorName, // or appropriate mapping
+            shift: {
+                shiftId: s.shift.shiftId,
+                name: shiftNameMap[s.shift.startTime],
+                startTime: s.shift.startTime
+            },
+            roomName: s.roomName,
+            dayDetails: s.dayDetails
+        }))];
 
         const buildingLayout = {};
         rooms.forEach(room => {
@@ -108,7 +135,7 @@ const fetchSchedulePageData = async () => {
         });
 
         return {
-            initialClasses: transformedClasses,
+            initialClasses: combinedClasses,
             initialRooms: rooms,
             initialSchedules: scheduleMap,
             buildingLayout: buildingLayout,

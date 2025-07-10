@@ -124,6 +124,34 @@ const ScheduleClientView = ({
         '32': 'bg-indigo-500',
         '33': 'bg-violet-500',
     };
+    const dayApiToAbbrMap = {
+        MONDAY: 'Mo',
+        TUESDAY: 'Tu', 
+        WEDNESDAY: 'We',
+        THURSDAY: 'Th',
+        FRIDAY: 'Fr',
+        SATURDAY: 'Sa',
+        SUNDAY: 'Su'
+    };
+
+    const shiftNameMap = {
+        '07:00:00': 'Morning Shift',
+        '10:30:00': 'Noon Shift',
+        '14:00:00': 'Afternoon Shift',
+        '17:30:00': 'Evening Shift',
+        '07:30:00': 'Weekend Shift'
+    };
+    
+    // Reverse mapping
+    const dayAbbrToApiMap = {
+        Mo: 'MONDAY',
+        Tu: 'TUESDAY',
+        We: 'WEDNESDAY',
+        Th: 'THURSDAY',
+        Fr: 'FRIDAY',
+        Sa: 'SATURDAY',
+        Su: 'SUNDAY'
+    };
     
     const showToast = (message) => {
         setToastMessage(message);
@@ -132,38 +160,76 @@ const ScheduleClientView = ({
 
     const allFilteredClasses = useMemo(() => {
         const assignedClassIds = new Set();
+        const selectedDayFull = Object.entries(dayApiToAbbrMap)
+            .find(([_, abbr]) => abbr === selectedDay)?.[0] || '';
+        
+        // Get all assigned class IDs
         Object.values(schedules).forEach(daySchedule => {
             Object.values(daySchedule).forEach(timeSchedule => {
-                Object.values(timeSchedule).forEach(classId => {
-                    if (classId) assignedClassIds.add(classId);
+                Object.values(timeSchedule).forEach(scheduleInfo => {
+                    if (scheduleInfo?.classId) assignedClassIds.add(scheduleInfo.classId);
                 });
             });
         });
 
         return initialClasses.filter(classItem => {
-            const isAssigned = assignedClassIds.has(classItem.classId);
+            // Check if class occurs on selected day
+            const occursOnSelectedDay = classItem.dayDetails?.some(
+                day => day.dayOfWeek === selectedDayFull && !day.online
+            );
+            
+            // Check if class matches selected shift
+            const shiftMatch = selectedTime === 'All' || 
+                classItem.shift?.name === selectedTime ||
+                (selectedTime === 'Weekend Shift' && ['Sa', 'Su'].includes(selectedDay));
+            
+            // Show in list if:
+            // 1. Occurs on selected day
+            // 2. Matches selected shift (or 'All' is selected)
+            // 3. Is either unassigned or not assigned to any room
+            const shouldShow = occursOnSelectedDay && shiftMatch && (
+                !assignedClassIds.has(classItem.classId) || 
+                classItem.roomName === "Unassigned"
+            );
+            
             const degreeMatch = selectedDegree === 'All' || classItem.degreeName === selectedDegree;
             const generationMatch = selectedGeneration === 'All' || classItem.generation === selectedGeneration;
             const searchTermMatch = searchTerm === '' || 
                 classItem.className.toLowerCase().includes(searchTerm.toLowerCase()) || 
                 (classItem.majorName && classItem.majorName.toLowerCase().includes(searchTerm.toLowerCase()));
 
-            return !isAssigned && degreeMatch && generationMatch && searchTermMatch;
+            return shouldShow && degreeMatch && generationMatch && searchTermMatch;
         });
-    }, [schedules, selectedDegree, selectedGeneration, searchTerm, initialClasses]);
+    }, [schedules, selectedDay, selectedTime, selectedDegree, selectedGeneration, searchTerm, initialClasses]);
 
     const groupedClassesByShift = useMemo(() => {
+        if (selectedTime !== 'All') {
+            // If a specific shift is selected, just show all filtered classes in one group
+            return { [selectedTime]: allFilteredClasses };
+        }
+        
+        // If 'All' is selected, group by shift
         const groups = {};
-        timeSlots.forEach(slot => {
-            groups[slot] = [];
-        });
-        allFilteredClasses.forEach(classItem => {
-            if (classItem.shift?.name) {
-                groups[classItem.shift.name].push(classItem);
-            }
+        constants.timeSlots.forEach(slot => {
+            groups[slot] = allFilteredClasses.filter(classItem => 
+                classItem.shift?.name === slot ||
+                (slot === 'Weekend Shift' && ['Sa', 'Su'].includes(selectedDay))
+            );
         });
         return groups;
-    }, [allFilteredClasses, timeSlots]);
+    }, [allFilteredClasses, selectedTime, selectedDay, constants.timeSlots]);
+
+    const getClassForRoom = (roomId) => {
+        const scheduleInfo = schedules[selectedDay]?.[selectedTime]?.[roomId];
+        if (!scheduleInfo) return null;
+        
+        // Find in combined classes
+        return initialClasses.find(c => c.classId === scheduleInfo.classId) || {
+            ...scheduleInfo,
+            generation: scheduleInfo.year // Map year to generation if needed
+        };
+    };
+    
 
     const orderedTimeSlots = useMemo(() => {
         if (selectedTime === 'All') {
@@ -209,8 +275,66 @@ const ScheduleClientView = ({
         event.dataTransfer.effectAllowed = 'move';
         event.dataTransfer.setData('application/json', JSON.stringify(classData));
     };
+    
+    const handleDragStartFromGrid = (event, classData, roomId) => {
+        const scheduleInfo = schedules[selectedDay]?.[selectedTime]?.[roomId];
+        if (!scheduleInfo) return;
+    
+        setDraggedItem({ 
+            item: classData, 
+            type: 'scheduled', 
+            origin: { 
+                day: selectedDay, 
+                time: selectedTime, 
+                roomId: roomId, 
+                scheduleId: scheduleInfo.scheduleId 
+            }
+        });
+        event.dataTransfer.effectAllowed = 'move';
+    };
 
-    const handleDragEnd = () => {
+    const handleDragEnd = async (event) => {
+        if (!draggedItem) {
+            setDraggedItem(null);
+            setDragOverCell(null);
+            setWarningCellId(null);
+            return;
+        }
+    
+        // Check if the item was dragged out (not dropped on a valid target)
+        if (draggedItem.type === 'scheduled' && event.dataTransfer.dropEffect === 'none') {
+            const { origin } = draggedItem;
+            
+            try {
+                setIsAssigning(true);
+                await scheduleService.unassignRoomFromClass(origin.scheduleId, session.accessToken);
+                
+                // Update UI state upon successful deletion
+                setSchedules(prevSchedules => {
+                    const newSchedules = JSON.parse(JSON.stringify(prevSchedules));
+                    if (newSchedules[origin.day]?.[origin.time]?.[origin.roomId]) {
+                        delete newSchedules[origin.day][origin.time][origin.roomId];
+                        
+                        // Clean up empty objects
+                        if (Object.keys(newSchedules[origin.day][origin.time]).length === 0) {
+                            delete newSchedules[origin.day][origin.time];
+                        }
+                        if (Object.keys(newSchedules[origin.day]).length === 0) {
+                            delete newSchedules[origin.day];
+                        }
+                    }
+                    return newSchedules;
+                });
+                
+                showToast("Class unassigned successfully.");
+            } catch (error) {
+                console.error("Failed to unassign class:", error);
+                showToast(`Failed to unassign class: ${error.message}`, true);
+            } finally {
+                setIsAssigning(false);
+            }
+        }
+    
         setDraggedItem(null);
         setDragOverCell(null);
         setWarningCellId(null);
@@ -500,25 +624,29 @@ const ScheduleClientView = ({
                                 <div className={`grid gap-3 ${getGridColumnClasses(selectedBuilding, parseInt(floor))}`}>
                                     {rooms.map((room) => (
                                         <RoomCard
-                                            key={room.roomId}
-                                            room={room}
-                                            classData={initialClasses.find(classItem => classItem.classId === schedules[selectedDay]?.[selectedTime]?.[room.roomId])}
-                                            isDragOver={dragOverCell?.roomId === room.roomId}
-                                            isWarning={warningCellId === room.roomId}
-                                            dragHandlers={{
-                                                onDragOver: handleGridCellDragOver,
-                                                onDragEnter: (event) => handleGridCellDragEnter(event, room.roomId),
-                                                onDragLeave: handleGridCellDragLeave,
-                                                onDrop: (event) => handleGridCellDrop(event, room.roomId),
-                                                onDragStart: (event) => handleDragStartFromGrid(
-                                                    event, 
-                                                    initialClasses.find(classItem => classItem.classId === schedules[selectedDay]?.[selectedTime]?.[room.roomId]), 
-                                                    room.roomId
-                                                ),
-                                                onDragEnd: handleDragEnd,
-                                            }}
-                                            className={getRoomColSpan(selectedBuilding, room.roomName)}
-                                        />
+                                        key={room.roomId}
+                                        room={room}
+                                        classData={getClassForRoom(room.roomId)}
+                                        isDragOver={dragOverCell?.roomId === room.roomId}
+                                        isWarning={warningCellId === room.roomId}
+                                        dragHandlers={{
+                                            onDragOver: handleGridCellDragOver,
+                                            onDragEnter: (event) => handleGridCellDragEnter(event, room.roomId),
+                                            onDragLeave: handleGridCellDragLeave,
+                                            onDrop: (event) => handleGridCellDrop(event, room.roomId),
+                                            onDragStart: (event) => {
+                                                const classData = initialClasses.find(classItem => {
+                                                    const scheduleInfo = schedules[selectedDay]?.[selectedTime]?.[room.roomId];
+                                                    return scheduleInfo && classItem.classId === scheduleInfo.classId;
+                                                });
+                                                if (classData) {
+                                                    handleDragStartFromGrid(event, classData, room.roomId);
+                                                }
+                                            },
+                                            onDragEnd: handleDragEnd,
+                                        }}
+                                        className={getRoomColSpan(selectedBuilding, room.roomName)}
+                                    />
                                     ))}
                                 </div>
                             </div>
