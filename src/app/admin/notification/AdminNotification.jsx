@@ -1,9 +1,12 @@
 import React from 'react';
+import { useSession } from 'next-auth/react';
+import { notificationService } from '@/services/notification.service';
 
 const CheckCircleIcon = ({ className }) => <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className={className}><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" /></svg>;
 const XCircleIcon = ({ className }) => <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className={className}><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" /></svg>;
 
 const NotificationItem = ({ notification, onApprove, onDeny, onMarkAsRead }) => {
+  const { data: session } = useSession();
   // A notification is actionable if its status is 'PENDING'.
   const isActionable = notification.status === 'PENDING';
   
@@ -11,7 +14,7 @@ const NotificationItem = ({ notification, onApprove, onDeny, onMarkAsRead }) => 
   const isStandardNotification = notification.type === 'notification';
 
   const {
-      message,
+      message: rawMessage, // Renamed to rawMessage to avoid confusion
       timestamp,
       isUnread,
       status,
@@ -26,6 +29,17 @@ const NotificationItem = ({ notification, onApprove, onDeny, onMarkAsRead }) => 
       details: notification,
   };
 
+  const profileUrlRegex = /(Instructor Profile: (https?:\/\/[^\s]+))/;
+  const match = rawMessage.match(profileUrlRegex);
+
+  let mainMessage = rawMessage;
+  let profileLink = null;
+
+  if (match) {
+      mainMessage = rawMessage.replace(profileUrlRegex, '').trim();
+      profileLink = match[2]; 
+  }
+
   const AvatarPlaceholder = ({ name }) => (
     <div className="w-12 h-12 rounded-full bg-blue-600 text-white flex items-center justify-center text-lg font-semibold flex-shrink-0">
       {name ? name.substring(0, 2).toUpperCase() : 'NN'}
@@ -33,9 +47,26 @@ const NotificationItem = ({ notification, onApprove, onDeny, onMarkAsRead }) => 
   );
 
   const handleItemClick = () => {
-    // Only mark as read if it's a standard notification and is unread.
     if (isStandardNotification && isUnread && typeof onMarkAsRead === 'function') {
       onMarkAsRead(notification.notificationId);
+    }
+  };
+
+  const [showPlaceholder, setShowPlaceholder] = React.useState(!profileLink);
+
+  const handleApprove = async (e) => {
+    e.stopPropagation();
+    if (session?.accessToken) {
+      await notificationService.approveChangeRequest(requestId, session.accessToken);
+      onApprove(requestId);
+    }
+  };
+
+  const handleDeny = async (e) => {
+    e.stopPropagation();
+    if (session?.accessToken) {
+      await notificationService.denyChangeRequest(requestId, session.accessToken);
+      onDeny(requestId);
     }
   };
 
@@ -55,29 +86,36 @@ const NotificationItem = ({ notification, onApprove, onDeny, onMarkAsRead }) => 
         <div
           className="w-12 h-12 rounded-full flex-shrink-0 bg-cover bg-center bg-slate-200 dark:bg-slate-500"
         >
-          <AvatarPlaceholder name={details?.className || message.substring(0,2)} />
+          {showPlaceholder ? (
+             <AvatarPlaceholder name={details?.className || mainMessage.substring(0,2)} />
+          ) : (
+            <img 
+              src={profileLink} 
+              alt="Instructor Profile" 
+              className="w-12 h-12 rounded-full object-cover"
+              onError={() => setShowPlaceholder(true)}
+            />
+          )}
         </div>
 
-        <div className="flex flex-col gap-2 flex-1 min-w-0">
+        <div className="flex flex-col gap-1 flex-1 min-w-0">
           <p className="font-inter font-semibold text-sm leading-normal text-slate-700 dark:text-gray-300 self-stretch break-words flex items-start gap-2">
-            {/* Show icons only for non-pending (already resolved) statuses */}
             {status === 'APPROVED' && <CheckCircleIcon className="w-5 h-5 text-green-500 flex-shrink-0 mt-0.5" />}
             {status === 'DENIED' && <XCircleIcon className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />}
-            <span>{message}</span>
+            <span>{mainMessage}</span>
           </p>
-
-          {/* Show buttons only for actionable PENDING requests */}
+          
           {isActionable && (
             <div className="flex flex-row items-center pt-1.5 gap-3">
               <button
-                onClick={(e) => { e.stopPropagation(); onApprove(requestId); }}
+                onClick={handleApprove}
                 className="flex justify-center items-center py-2 px-4 bg-blue-600 rounded-md text-white font-inter font-medium text-xs hover:bg-blue-700 active:bg-blue-800 transition-colors shadow-sm"
                 title={`Approve request ${requestId}`}
               >
                 Approve
               </button>
               <button
-                onClick={(e) => { e.stopPropagation(); onDeny(requestId); }}
+                onClick={handleDeny}
                 className="box-border flex justify-center items-center py-2 px-4 text-gray-800 dark:text-white bg-gray-200 hover:bg-gray-300 dark:bg-gray-600 dark:hover:bg-gray-500 rounded-md font-inter font-medium text-xs active:bg-slate-100 border dark:border-gray-500 transition-colors shadow-sm"
                 title={`Deny request ${requestId}`}
               >

@@ -12,6 +12,7 @@ function decodeJwt(token) {
   }
 }
 
+
 export const authOptions = {
   providers: [
     CredentialsProvider({
@@ -65,7 +66,7 @@ export const authOptions = {
             }
 
             return {
-              id: decodedPayload.sub,
+              id: decodedPayload.instructorId, // Use instructorId from the token
               name: userName, // Use the constructed or cleaned-up name
               email: decodedPayload.sub,
               role: userRole,
@@ -96,21 +97,29 @@ export const authOptions = {
     },
     async session({ session, token }) {
       if (token) {
-        session.accessToken = token.accessToken;
-        session.user = {
-            ...session.user,
-            id: token.id,
-            role: token.role,
-            name: token.name,
-            email: token.email
-        };
+          // Decode the token to get the instructorId
+          const decoded = token.accessToken ? 
+              JSON.parse(Buffer.from(token.accessToken.split('.')[1], 'base64').toString()) 
+              : null;
+          
+          session.accessToken = token.accessToken;
+          session.user = {
+              ...session.user,
+              id: decoded?.instructorId || token.id, // Use instructorId from token
+              email: token.email,
+              role: token.role,
+              name: token.name
+          };
       }
+      console.log("Updated session:", session);
       return session;
-    },
   },
+  },
+  
   session: { strategy: 'jwt' },
   secret: process.env.NEXTAUTH_SECRET,
 };
+
 
 const handler = NextAuth(authOptions);
 export { handler as GET, handler as POST };

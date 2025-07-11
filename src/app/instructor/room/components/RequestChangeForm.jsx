@@ -1,3 +1,4 @@
+// src/app/instructor/room/components/RequestChangeForm.jsx
 "use client";
 
 import React, { useState, useRef, useEffect } from 'react';
@@ -96,7 +97,7 @@ const RequestChangeForm = ({ isOpen, onClose, onSave, roomDetails, instructorCla
     today.setHours(0, 0, 0, 0);
 
     const getInitialState = () => ({
-        scheduleId: instructorClasses && instructorClasses.length > 0 ? instructorClasses[0].scheduleId : '',
+        scheduleId: instructorClasses && instructorClasses.length > 0 ? instructorClasses[0].id : '',
         date: new Date(),
         description: '',
     });
@@ -142,22 +143,26 @@ const RequestChangeForm = ({ isOpen, onClose, onSave, roomDetails, instructorCla
         }
     
         try {
-            // Get numeric instructor ID from session
-            const instructorId = session.user.id; // This should be numeric
+            // Debug: Log the full session data
+            console.log("Full session data:", session);
             
-            if (!instructorId || typeof instructorId !== 'number') {
-                throw new Error('Invalid instructor ID in session');
+            // Get instructor ID from session - ensure we're accessing the correct path
+            const instructorId = session?.user?.id;
+            
+            if (!instructorId) {
+                throw new Error(`Instructor ID not found in session. Session structure: ${JSON.stringify(session)}`);
             }
     
+            // Create payload with proper numeric IDs
             const payload = {
-                instructorId: instructorId, // Numeric ID
+                instructorId: Number(instructorId),
                 scheduleId: Number(requestData.scheduleId),
                 newRoomId: Number(roomDetails.id),
                 effectiveDate: requestData.date.toISOString().split('T')[0],
                 description: requestData.description || '',
             };
     
-            console.log("Final payload:", payload);
+            console.log("Submitting payload:", payload);
             
             await notificationService.submitChangeRequest(payload, session.accessToken);
             
@@ -165,8 +170,12 @@ const RequestChangeForm = ({ isOpen, onClose, onSave, roomDetails, instructorCla
             onClose();
             
         } catch (error) {
-            console.error('Submission failed:', error);
-            alert(`Error: ${error.message}`);
+            console.error('Submission failed:', {
+                error: error.message,
+                sessionUser: session?.user,
+                stack: error.stack
+            });
+            alert(`Submission failed: ${error.message}`);
         }
     };
 

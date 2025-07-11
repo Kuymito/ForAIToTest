@@ -6,6 +6,7 @@ import { getServerSession } from 'next-auth';
 import { scheduleService } from '@/services/schedule.service';
 import ConfirmationModal from './ConfirmationModal';
 import { useSession } from 'next-auth/react';
+import { useEffect } from 'react';
 
 // Inside your component
 
@@ -270,29 +271,42 @@ const ScheduleClientView = ({
         };
     }, [selectedBuilding, selectedDay, selectedTime, schedules, buildingLayout]);
 
-    const handleDragStartFromList = (event, classData) => {
-        setDraggedItem({ item: classData, type: 'new' });
-        event.dataTransfer.effectAllowed = 'move';
-        event.dataTransfer.setData('application/json', JSON.stringify(classData));
-    };
-    
-    const handleDragStartFromGrid = (event, classData, roomId) => {
+    useEffect(() => {
+        const preventDefault = (e) => {
+            e.preventDefault();
+        };
+
+        const handleGlobalDrop = (e) => {
+            e.preventDefault();
+        };
+
+        // By default, prevent dropping on the window
+        window.addEventListener('dragover', preventDefault);
+        window.addEventListener('drop', handleGlobalDrop);
+
+        // Cleanup the event listeners when the component unmounts
+        return () => {
+            window.removeEventListener('dragover', preventDefault);
+            window.removeEventListener('drop', handleGlobalDrop);
+        };
+    }, []);
+
+    const handleDragStartFromGrid = (e, classData, roomId) => {
         const scheduleInfo = schedules[selectedDay]?.[selectedTime]?.[roomId];
         if (!scheduleInfo) return;
-    
-        setDraggedItem({ 
-            item: classData, 
-            type: 'scheduled', 
-            origin: { 
-                day: selectedDay, 
-                time: selectedTime, 
-                roomId: roomId, 
-                scheduleId: scheduleInfo.scheduleId 
-            }
+      
+        setDraggedItem({
+          item: classData,
+          type: 'scheduled',
+          origin: {
+            day: selectedDay,
+            time: selectedTime,
+            roomId,
+            scheduleId: scheduleInfo.scheduleId // ✅ This is where you put it
+          }
         });
-        event.dataTransfer.effectAllowed = 'move';
-    };
-
+      };
+    
     const handleDragEnd = async (event) => {
         if (!draggedItem) {
             setDraggedItem(null);
@@ -301,21 +315,30 @@ const ScheduleClientView = ({
             return;
         }
     
-        // Check if the item was dragged out (not dropped on a valid target)
-        if (draggedItem.type === 'scheduled' && event.dataTransfer.dropEffect === 'none') {
+        // ✅ NEW: Check if drop target is null (i.e. dropped nowhere valid)
+        const dropTarget = document.elementFromPoint(event.clientX, event.clientY);
+        const droppedOutsideGrid = !dropTarget?.closest('.room-card-drop-zone');
+    
+        if (draggedItem.type === 'scheduled' && droppedOutsideGrid) {
             const { origin } = draggedItem;
-            
+            console.log('✅ Dropped outside. Unassigning...', origin);
+    
+            if (!origin.scheduleId) {
+                showToast("Cannot unassign: Schedule ID is missing.", true);
+                setDraggedItem(null);
+                return;
+            }
+    
             try {
                 setIsAssigning(true);
-                await scheduleService.unassignRoomFromClass(origin.scheduleId, session.accessToken);
-                
-                // Update UI state upon successful deletion
+    
+                await scheduleService.unassignRoomFromClass(origin.scheduleId, token);
+    
                 setSchedules(prevSchedules => {
                     const newSchedules = JSON.parse(JSON.stringify(prevSchedules));
                     if (newSchedules[origin.day]?.[origin.time]?.[origin.roomId]) {
                         delete newSchedules[origin.day][origin.time][origin.roomId];
-                        
-                        // Clean up empty objects
+    
                         if (Object.keys(newSchedules[origin.day][origin.time]).length === 0) {
                             delete newSchedules[origin.day][origin.time];
                         }
@@ -325,7 +348,7 @@ const ScheduleClientView = ({
                     }
                     return newSchedules;
                 });
-                
+    
                 showToast("Class unassigned successfully.");
             } catch (error) {
                 console.error("Failed to unassign class:", error);
@@ -339,6 +362,7 @@ const ScheduleClientView = ({
         setDragOverCell(null);
         setWarningCellId(null);
     };
+    
 
     const handleGridCellDragOver = (event) => {
         event.preventDefault();

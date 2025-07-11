@@ -77,7 +77,7 @@ const submitChangeRequest = async (requestData, token) => {
         console.log("Final payload being sent:", payload); // Debug log
 
         const response = await axios.post(
-            `${API_BASE_URL}/change-requests`, // Ensure this matches your backend
+            `${API_URL}/change-requests`, // Ensure this matches your backend
             payload,
             {
                 headers: {

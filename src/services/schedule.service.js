@@ -39,8 +39,11 @@ const getAuthHeaders = async (token) => {
  */
 const handleResponse = (response) => {
     if (response.status >= 200 && response.status < 300) {
-        if (response.data && response.data.payload) {
+        if (response.data && typeof response.data.payload !== 'undefined') {
             return response.data.payload;
+        }
+        if(response.data){
+            return response.data;
         }
         return null; // Handle successful but empty responses (e.g., 204 No Content)
     }
@@ -57,7 +60,23 @@ export const getAllSchedules = async (token) => {
     try {
         const headers = await getAuthHeaders(token);
         const response = await axios.get(`${API_BASE_URL}/schedule`, { headers });
-        return handleResponse(response);
+        
+        // FIX: Handle potential duplicate schedule entries from the backend
+        const payload = handleResponse(response);
+        if (Array.isArray(payload)) {
+            const uniqueSchedules = new Map();
+            payload.forEach(schedule => {
+                // Use 'scheduleId' as the unique key to prevent duplicates.
+                if (schedule && schedule.scheduleId) {
+                    if (!uniqueSchedules.has(schedule.scheduleId)) {
+                        uniqueSchedules.set(schedule.scheduleId, schedule);
+                    }
+                }
+            });
+            return Array.from(uniqueSchedules.values());
+        }
+        
+        return payload; // Return as-is if not an array
     } catch (error) {
         console.error("getAllSchedules service error:", error.message);
         throw error;
@@ -73,7 +92,24 @@ export const getMySchedule = async (token) => {
     try {
         const headers = await getAuthHeaders(token);
         const response = await axios.get(`${API_BASE_URL}/schedule/my-schedule`, { headers });
-        return handleResponse(response);
+        
+        // FIX: Handle potential duplicate schedule entries from the backend
+        const payload = handleResponse(response);
+        if (Array.isArray(payload)) {
+            const uniqueSchedules = new Map();
+            payload.forEach(schedule => {
+                // Use 'scheduleId' as the unique key to prevent duplicates.
+                if (schedule && schedule.scheduleId) {
+                    if (!uniqueSchedules.has(schedule.scheduleId)) {
+                        uniqueSchedules.set(schedule.scheduleId, schedule);
+                    }
+                }
+            });
+            return Array.from(uniqueSchedules.values());
+        }
+        
+        return payload; // Return as-is if not an array
+
     } catch (error) {
         console.error("getMySchedule service error:", error.message);
         throw error;
@@ -108,9 +144,10 @@ const assignRoomToClass = async (scheduleRequest, token) => {
  */
   const unassignRoomFromClass = async (scheduleId, token) => {
     const isServer = typeof window === 'undefined';
-    // The endpoint is /api/schedule/{scheduleId} which will be proxied
-    const url = isServer ? `${API_BASE_URL}/schedule/${scheduleId}` : `${API_BASE_URL}/schedule/${scheduleId}`;
-  
+    const url = isServer 
+      ? `${API_BASE_URL}/schedule/${scheduleId}` 
+      : `${API_BASE_URL}/schedule/${scheduleId}`;
+    
     try {
       await axios.delete(url, {
         headers: {
